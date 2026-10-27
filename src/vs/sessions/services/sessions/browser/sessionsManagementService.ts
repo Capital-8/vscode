@@ -8,8 +8,9 @@ import { raceCancellationError } from '../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { CancellationError, isCancellationError } from '../../../../base/common/errors.js';
 import { isErrorWithActions, toErrorMessage } from '../../../../base/common/errorMessage.js';
-import { Disposable, DisposableMap, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, DisposableMap, DisposableStore, IDisposable, MutableDisposable, toDisposable, IReference } from '../../../../base/common/lifecycle.js';
 import { ResourceMap } from '../../../../base/common/map.js';
+import { IArtifactModel } from '../../../../platform/artifactIntegrations/common/artifactIntegration.js';
 import { IObservable, observableValue } from '../../../../base/common/observable.js';
 import { URI } from '../../../../base/common/uri.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
@@ -1311,6 +1312,14 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 		return this._getProvider(session)?.getSessionWorktreeDiskUsage?.(session.sessionId, token) ?? Promise.resolve(undefined);
 	}
 
+	async sessionWorktreeCleanup(session: ISession, retry: boolean) {
+		const provider = this._getProvider(session);
+		if (retry && !provider?.sessionWorktreeCleanup) {
+			throw new Error(localize('sessions.worktreeCleanupUnavailable', "Retrying worktree cleanup is unavailable for this session."));
+		}
+		return provider?.sessionWorktreeCleanup?.(session.sessionId, retry);
+	}
+
 	async unarchiveSession(session: ISession): Promise<void> {
 		await this._getProvider(session)?.unarchiveSession(session.sessionId);
 		this._onDidUnarchiveSession.fire(session);
@@ -1503,7 +1512,7 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 	}
 
 	canMoveChat(session: ISession, chat: IChat): boolean {
-		return this._getProvider(session)?.canMoveChat(session.sessionId, chat.resource) === true;
+		return chat.status.get() !== SessionStatus.Untitled && this._getProvider(session)?.canMoveChat(session.sessionId, chat.resource) === true;
 	}
 
 	async moveChat(session: ISession, chat: IChat, destination: ISessionChatMoveTarget): Promise<void> {
@@ -1569,6 +1578,10 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 			throw new Error(localize('sessions.importSession.unsupported', "Importing is not supported for this session."));
 		}
 		await provider.importSession(session.sessionId);
+	}
+
+	async acquireArtifactIntegration(session: ISession, artifactId: string): Promise<IReference<IArtifactModel> | undefined> {
+		return this._getProvider(session)?.acquireArtifactIntegration?.(session.sessionId, artifactId);
 	}
 }
 

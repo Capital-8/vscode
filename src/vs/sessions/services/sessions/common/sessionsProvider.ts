@@ -4,9 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { CancellationToken } from '../../../../base/common/cancellation.js';
+import type { IAgentHostWorktreeCleanupStatus } from '../../../../platform/agentHost/common/agentHostWorktreeCleanup.js';
 import { Event } from '../../../../base/common/event.js';
-import { IDisposable } from '../../../../base/common/lifecycle.js';
+import { IDisposable, IReference } from '../../../../base/common/lifecycle.js';
 import { IObservable, IReader } from '../../../../base/common/observable.js';
+import { IArtifactModel } from '../../../../platform/artifactIntegrations/common/artifactIntegration.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
@@ -80,8 +82,8 @@ export type INestedChatWorkspace =
 export interface INestedChatWorkspaceSupport {
 	/** The session's own folder (its default chat's primary folder, excluding scratch folders); `undefined` for a workspace-less session. */
 	readonly sessionFolder: URI | undefined;
-	/** Non-scratch folders already in the session (any chat), session folder first, deduped. */
-	readonly sessionFolders: readonly URI[];
+	/** When the session folder is the session's own git worktree, its branch and repository label; `undefined` otherwise. */
+	readonly sessionFolderWorktree: { readonly branch: string | undefined; readonly repositoryLabel: string | undefined } | undefined;
 	/** Whether the agent gives a chat its own folder (agent capability `multipleWorkingDirectories`). */
 	readonly multipleFolders: boolean;
 	/** Folder browse actions of this provider (same host), for "Browse…". */
@@ -567,6 +569,7 @@ export interface ISessionsProvider {
 
 	/** Remove a recorded artifact without changing independent session associations. */
 	removeSessionArtifact?(sessionId: string, artifactId: string): Promise<void>;
+	acquireArtifactIntegration?(sessionId: string, artifactId: string): Promise<IReference<IArtifactModel>>;
 
 	/** List canvas types registered in one live chat. After returning `undefined`, republish the chat's canvases when an authoritative snapshot is available. */
 	listCanvases?(sessionId: string, chatResource: URI): Promise<SessionCanvasDefinitionSnapshot>;
@@ -671,6 +674,9 @@ export interface ISessionsProvider {
 	 * Providers without host-owned worktrees leave this capability undefined.
 	 */
 	getSessionWorktreeDiskUsage?(sessionId: string, token?: CancellationToken): Promise<number | undefined>;
+
+	/** Returns undefined when cleanup status and retry are not supported by this session's host. */
+	sessionWorktreeCleanup?(sessionId: string, retry: boolean): Promise<IAgentHostWorktreeCleanupStatus | undefined>;
 
 	/**
 	 * Unarchive a session.
