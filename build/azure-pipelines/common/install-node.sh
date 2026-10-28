@@ -46,6 +46,8 @@ sha256() {
 }
 
 for attempt in $(seq 1 "$ATTEMPTS"); do
+	# THROWAWAY: force the first attempt to stall out.
+	if [ "$attempt" -eq 1 ]; then MAX_TIME=0.2; else MAX_TIME=180; fi
 	if download "$BASE_URL/SHASUMS256.txt" "$WORK_DIR/SHASUMS256.txt" \
 		&& download "$BASE_URL/$NAME.tar.gz" "$WORK_DIR/$NAME.tar.gz"; then
 		EXPECTED="$(grep " $NAME.tar.gz\$" "$WORK_DIR/SHASUMS256.txt" | cut -d' ' -f1 || true)"

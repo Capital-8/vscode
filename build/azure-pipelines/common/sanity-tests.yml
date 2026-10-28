@@ -161,7 +161,7 @@ jobs:
       # agent pools at times, so the bounded download below is only the fallback.
       - task: Cache@2
         inputs:
-          key: '"sanity-node" | "22.22.0" | "$(Agent.OS)" | "$(Agent.OSArchitecture)"'
+          key: '"sanity-node-forced" | "22.22.0" | "$(Agent.OS)" | "$(Agent.OSArchitecture)"'
           path: $(Agent.ToolsDirectory)/sanity-node
         displayName: Restore Node.js cache
         retryCountOnTaskFailure: 2
