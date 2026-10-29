@@ -7,6 +7,7 @@ import { DeferredPromise, RunOnceScheduler, disposableTimeout, raceCancellationE
 import { CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { LRUCache } from '../../../../../base/common/map.js';
+import { StopWatch } from '../../../../../base/common/stopwatch.js';
 import { ICloudSandboxApiService, CloudSandboxRequestError } from '../../../../../platform/agentHost/common/cloudSandboxAgentHost.js';
 import { parse } from '../../../../../platform/github/common/client/schema.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
@@ -77,6 +78,7 @@ export class CloudSandboxSessionFeed extends Disposable {
 				this._reconnect.cancel();
 				return;
 			}
+			const connectionTime = StopWatch.create();
 			const socket = this._webSocketFactory(connection.url, connection.subprotocol);
 			const ready = new DeferredPromise<void>();
 			let closed = false;
@@ -140,7 +142,10 @@ export class CloudSandboxSessionFeed extends Disposable {
 				throw new Error('Session feed disconnected during setup');
 			}
 			this._active.value = this._pending.clearAndLeak();
-			this._reconnect.schedule(Math.max(1_000, Date.parse(connection.reconnect_after) - Date.now()));
+			const reconnectDelay = connection.reconnect_in !== undefined
+				? connection.reconnect_in - connectionTime.elapsed()
+				: Date.parse(connection.reconnect_after) - Date.now();
+			this._reconnect.schedule(Math.max(1_000, reconnectDelay));
 			this._logService.debug(`${LOG_PREFIX} Connected to task status feed.`);
 			if (refresh) {
 				this._invalidate(false);
