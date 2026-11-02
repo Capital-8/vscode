@@ -9,7 +9,7 @@ jobs:
   - job: Quality
     displayName: Quality Checks
     # Leave enough time for NOTICE retries and the fallback path to finish.
-    timeoutInMinutes: 30
+    timeoutInMinutes: 45
     variables:
       - name: skipComponentGovernanceDetection
         value: true
@@ -160,6 +160,10 @@ jobs:
       # minutes. Component Detection only reads manifests and lockfiles, so scanning
       # before compile finds the same components (compile only copies src cgmanifest.json
       # files into out-build).
+      # VALIDATION ONLY: delay the NOTICE past the old 15 minute platform budget.
+      - script: sleep 1200
+        displayName: Delay CG NOTICE (validation only)
+
       - script: npm run download-builtin-extensions-cg
         displayName: Download component details of built-in extensions
         continueOnError: true
