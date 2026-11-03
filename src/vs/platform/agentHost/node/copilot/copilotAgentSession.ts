@@ -768,6 +768,7 @@ interface ICopilotCanvasProjection {
 /** Canvases a configuration refresh carries from a chat's previous runtime to its replacement. */
 export interface ICopilotCanvasHandoff {
 	readonly projections: readonly ICopilotCanvasProjection[];
+	readonly pendingCloseInstanceIds?: ReadonlySet<string>;
 }
 
 /** A projected canvas; `handedOver` marks one seeded from a handoff that the replacement runtime has not reported since. */
@@ -2021,6 +2022,7 @@ export class CopilotAgentSession extends Disposable {
 	private readonly _canvasCloses = new Map<string, Promise<void>>();
 	/** Closed events still expected, by instance ID, for closes applied when the runtime acknowledged them first. */
 	private readonly _expectedCanvasClosedEvents = new Map<string, number>();
+	private readonly _deferredCanvasCloseInstanceIds = new Set<string>();
 	private _canvasExtensions: SessionEventPayload<'session.extensions_loaded'>['data']['extensions'] | undefined;
 	private _canvasRegistryGeneration = 0;
 	private _canvasRegistrySettlementPending = false;
@@ -2209,6 +2211,9 @@ export class CopilotAgentSession extends Disposable {
 		);
 		this._onDidSessionProgress = options.onDidSessionProgress;
 		this._pendingCanvasHandoff = options.canvasHandoff;
+		for (const instanceId of options.canvasHandoff?.pendingCloseInstanceIds ?? []) {
+			this._deferredCanvasCloseInstanceIds.add(instanceId);
+		}
 		for (const projection of options.canvasHandoff?.projections ?? []) {
 			this._canvasByInstanceId.set(projection.canvas.instanceId, { ...projection, handedOver: true });
 			// Withdraws any source published by a replacement the refresh discarded.
@@ -4879,6 +4884,19 @@ export class CopilotAgentSession extends Disposable {
 	/** Refreshes inventory observers after registration without changing projected canvas membership. */
 	publishCanvases(): void {
 		if (this._wrapper.canvasRuntimeEnabled && this._canvasPhase === 'live') {
+			this._publishCanvasProjectionStates();
+			this._publishCanvases();
+		}
+	}
+
+	republishCanvasProjection(published: readonly string[] | undefined): void {
+		if (!this._wrapper.canvasRuntimeEnabled || this._canvasPhase !== 'live' || this._pendingCanvasHandoff) {
+			return;
+		}
+		this._publishCanvasProjectionStates();
+		const resources = [...this._canvasByInstanceId.values()].map(projection => projection.resource.toString());
+		const current = published ?? [];
+		if (resources.length !== current.length || resources.some((resource, index) => resource !== current[index])) {
 			this._publishCanvases();
 		}
 	}
@@ -4989,7 +5007,9 @@ export class CopilotAgentSession extends Disposable {
 		for (const projection of projections) {
 			this._publishCanvasState(projection);
 		}
-		return { projections };
+		const pendingCloseInstanceIds = new Set(this._deferredCanvasCloseInstanceIds);
+		this._deferredCanvasCloseInstanceIds.clear();
+		return { projections, pendingCloseInstanceIds };
 	}
 
 	/** Takes ownership of canvases handed to this session once its refresh keeps it, publishing membership changes made meanwhile. */
@@ -4997,8 +5017,33 @@ export class CopilotAgentSession extends Disposable {
 		if (this._store.isDisposed || this._pendingCanvasHandoff !== handoff) {
 			return false;
 		}
+		for (const instanceId of handoff.pendingCloseInstanceIds ?? []) {
+			this._deferredCanvasCloseInstanceIds.add(instanceId);
+			this._canvasByInstanceId.delete(instanceId);
+			this._ignoredRestoredCanvasInstanceIds.add(instanceId);
+		}
 		this._pendingCanvasHandoff = undefined;
 		this._publishAuthoritativeCanvasRegistry();
+		void this._flushDeferredCanvasCloses(this._wrapper);
+		return true;
+	}
+
+	discardCanvasHandoff(handoff: ICopilotCanvasHandoff): boolean {
+		if (this._store.isDisposed || this._pendingCanvasHandoff !== handoff) {
+			return false;
+		}
+		this._pendingCanvasHandoff = undefined;
+		for (const instanceId of new Set([
+			...handoff.projections.map(projection => projection.canvas.instanceId),
+			...(handoff.pendingCloseInstanceIds ?? []),
+		])) {
+			this._canvasByInstanceId.delete(instanceId);
+			this._ignoredRestoredCanvasInstanceIds.add(instanceId);
+			this._expectedCanvasClosedEvents.delete(instanceId);
+			this._deferredCanvasCloseInstanceIds.add(instanceId);
+		}
+		this._publishAuthoritativeCanvasRegistry();
+		void this._flushDeferredCanvasCloses(this._wrapper);
 		return true;
 	}
 
@@ -5166,6 +5211,12 @@ export class CopilotAgentSession extends Disposable {
 		});
 	}
 
+	private _publishCanvasProjectionStates(): void {
+		for (const projection of this._canvasByInstanceId.values()) {
+			this._publishCanvasState(projection);
+		}
+	}
+
 	private _invalidateCanvasRegistrySnapshot(): void {
 		this._canvasRegistryGeneration++;
 	}
@@ -5193,7 +5244,9 @@ export class CopilotAgentSession extends Disposable {
 
 	/** Reopens handed-over canvases the runtime restored and drops the ones it no longer has open. */
 	private async _reconcileCanvasHandoff(wrapper: CopilotSessionWrapper): Promise<void> {
-		if (!wrapper.canvasRuntimeEnabled || ![...this._canvasByInstanceId.values()].some(projection => projection.handedOver)) {
+		const handoff = this._pendingCanvasHandoff;
+		const pendingCloseInstanceIds = handoff?.pendingCloseInstanceIds;
+		if (!wrapper.canvasRuntimeEnabled || (!pendingCloseInstanceIds?.size && ![...this._canvasByInstanceId.values()].some(projection => projection.handedOver))) {
 			return;
 		}
 		let openCanvases: CopilotSession['openCanvases'];
@@ -5207,6 +5260,10 @@ export class CopilotAgentSession extends Disposable {
 			return;
 		}
 		const openByInstanceId = new Map(openCanvases.map(canvas => [canvas.instanceId, canvas]));
+		await this._applyDeferredCanvasCloses(wrapper, openByInstanceId);
+		if (this._store.isDisposed) {
+			return;
+		}
 		// Canvases the runtime reported while the request was pending are no longer marked, so they keep that newer state.
 		for (const projection of [...this._canvasByInstanceId.values()]) {
 			if (!projection.handedOver) {
@@ -5217,6 +5274,39 @@ export class CopilotAgentSession extends Disposable {
 				this._projectOpenedCanvas(open);
 			} else {
 				this._canvasByInstanceId.delete(projection.canvas.instanceId);
+			}
+		}
+	}
+
+	private async _flushDeferredCanvasCloses(wrapper: CopilotSessionWrapper): Promise<void> {
+		if (this._deferredCanvasCloseInstanceIds.size === 0 || this._store.isDisposed) {
+			return;
+		}
+		let openCanvases: CopilotSession['openCanvases'];
+		try {
+			({ openCanvases } = await this._awaitControlPlaneRpc('rpc.canvas.listOpen', wrapper.session.rpc.canvas.listOpen()));
+		} catch (error) {
+			this._logService.warn(`[Copilot:${this.sessionId}] Failed to reconcile deferred canvas closes: ${getErrorMessage(error)}`);
+			return;
+		}
+		try {
+			await this._applyDeferredCanvasCloses(wrapper, new Map(openCanvases.map(canvas => [canvas.instanceId, canvas])));
+		} catch (error) {
+			this._logService.warn(`[Copilot:${this.sessionId}] Failed to apply deferred canvas closes: ${getErrorMessage(error)}`);
+		}
+	}
+
+	private async _applyDeferredCanvasCloses(wrapper: CopilotSessionWrapper, openByInstanceId: Map<string, CopilotSession['openCanvases'][number]>): Promise<void> {
+		for (const instanceId of [...this._deferredCanvasCloseInstanceIds]) {
+			if (!openByInstanceId.has(instanceId)) {
+				this._deferredCanvasCloseInstanceIds.delete(instanceId);
+				continue;
+			}
+			await this._awaitControlPlaneRpc('rpc.canvas.close', wrapper.session.rpc.canvas.close({ instanceId }));
+			openByInstanceId.delete(instanceId);
+			this._deferredCanvasCloseInstanceIds.delete(instanceId);
+			if (this._store.isDisposed) {
+				return;
 			}
 		}
 	}
@@ -5292,6 +5382,7 @@ export class CopilotAgentSession extends Disposable {
 		this._canvasByInstanceId.clear();
 		this._ignoredRestoredCanvasInstanceIds.clear();
 		this._expectedCanvasClosedEvents.clear();
+		this._deferredCanvasCloseInstanceIds.clear();
 		if (hadCanvases) {
 			this._publishCanvases();
 		}
@@ -12702,6 +12793,9 @@ export class CopilotAgentSession extends Disposable {
 		store.add(wrapper.onUserMessage(e => {
 			if (!e.agentId) {
 				this._ignoredRestoredCanvasInstanceIds.clear();
+				for (const instanceId of this._deferredCanvasCloseInstanceIds) {
+					this._ignoredRestoredCanvasInstanceIds.add(instanceId);
+				}
 			}
 		}));
 
