@@ -102,6 +102,7 @@ suite('SessionsWorkspaceSelectionTelemetry', () => {
 				data: {
 					source: 'keyboardShortcut',
 					workspaceArgumentKind: 'local',
+					workspaceArgumentRemoteKind: 'none',
 					workspaceArgumentIsDefault: true,
 					observationReason: 'firstRequest',
 					observationDurationMs: 400,

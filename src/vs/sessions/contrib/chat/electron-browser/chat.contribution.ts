@@ -36,7 +36,7 @@ import { AgentsWindowUsage } from '../../../../workbench/contrib/chat/common/age
 import { ISessionsWindowOpenContext, ISessionsWindowOpenViewState, SessionsWindowOpenTelemetry, SessionsWindowSessionStartTelemetry } from '../../sessions/browser/sessionsWindowOpenTelemetry.js';
 import { getNonArchivedSessionListCount } from '../../../common/sessionsTelemetry.js';
 import { INewSessionComposerService, NewSessionWorkspacePreselectionSource } from '../browser/newSessionComposerService.js';
-import { getAgentsWindowWorkspaceArgumentKind, resolveAgentsWindowFolderIntent } from '../browser/agentsWindowOpenIntent.js';
+import { getAgentsWindowWorkspaceArgumentKind, getAgentsWindowWorkspaceArgumentRemoteKind, resolveAgentsWindowFolderIntent } from '../browser/agentsWindowOpenIntent.js';
 import { findSessionForOpenSessionLink } from '../browser/openSessionLinkOpener.contribution.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { AgentsWindowWorkspaceHandoff } from '../browser/agentsWindowWorkspaceHandoff.js';
@@ -130,6 +130,7 @@ export class SelectAgentsFolderContribution extends Disposable implements IWorkb
 			this.logService.info(`[AgentsHandoff] IPC received: folderUri=${workspaceUri?.toString() ?? '(none)'} sessionResource=${sessionResource?.toString() ?? '(none)'}`);
 			const telemetry = this._startWindowOpenTelemetry(source, {
 				workspaceArgumentKind: getAgentsWindowWorkspaceArgumentKind(workspaceUri),
+				workspaceArgumentRemoteKind: getAgentsWindowWorkspaceArgumentRemoteKind(workspaceUri),
 				hasSessionArgument: sessionResource !== undefined,
 				workspaceArgumentIsDefault,
 			});
@@ -223,7 +224,7 @@ export class SelectAgentsFolderContribution extends Disposable implements IWorkb
 		}
 		const resolved = resolveAgentsWindowFolderIntent(workspaceUri, this.configurationService);
 		const folderUri = resolved.folderUri ?? (draft ? workspaceUri : undefined);
-		if (showNewSession && !folderUri && !draft) {
+		if (showNewSession && !folderUri && !draft && !resolved.remote) {
 			await raceCancellation(this.lifecycleService.when(LifecyclePhase.Restored), token);
 			if (!token.isCancellationRequested) {
 				this.newSessionComposerService.notifyUserNavigation();
@@ -231,11 +232,13 @@ export class SelectAgentsFolderContribution extends Disposable implements IWorkb
 			}
 			return;
 		}
-		if (folderUri || draft) {
+		if (folderUri || draft || resolved.remote) {
 			if (showNewSession) {
 				this.newSessionComposerService.notifyUserNavigation();
 			}
-			await this._workspaceHandoff.selectWorkspace({ folderUri, preferDevContainer: resolved.preferDevContainer, isDefault, draft, noWorkspace, revealNewSession: showNewSession }, state => telemetry?.recordWorkspaceHandoffState(state));
+			await this._workspaceHandoff.selectWorkspace({
+				folderUri, ...(resolved.remote ? { remote: resolved.remote } : {}), preferDevContainer: resolved.preferDevContainer, isDefault, draft, noWorkspace, revealNewSession: showNewSession,
+			}, state => telemetry?.recordWorkspaceHandoffState(state));
 		}
 	}
 
