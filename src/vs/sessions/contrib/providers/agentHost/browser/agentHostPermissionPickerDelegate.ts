@@ -6,8 +6,7 @@
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { onUnexpectedError } from '../../../../../base/common/errors.js';
 import { Disposable, DisposableMap, DisposableStore } from '../../../../../base/common/lifecycle.js';
-import { derived, IObservable, IReader, observableSignal } from '../../../../../base/common/observable.js';
-import { isWeb } from '../../../../../base/common/platform.js';
+import { derived, IObservable, IReader, observableSignal, observableSignalFromEvent } from '../../../../../base/common/observable.js';
 import { localize } from '../../../../../nls.js';
 import { createAgentHostSandboxToggle } from '../../../../../platform/agentHost/browser/agentHostSandboxToggle.js';
 import { IAgentHostEnablementService } from '../../../../../platform/agentHost/common/agentHostEnablementService.js';
@@ -19,13 +18,14 @@ import { narrowCodexPermissionsPreset } from '../../../../../platform/agentHost/
 import { SessionConfigPropertySchema } from '../../../../../platform/agentHost/common/state/protocol/commands.js';
 import { ChatConfiguration, ChatPermissionLevel, isChatPermissionLevel } from '../../../../../workbench/contrib/chat/common/constants.js';
 import { IPermissionLevelMeta, IPermissionPickerDelegate } from '../../copilotChatSessions/browser/permissionPicker.js';
-import { getSessionConfigProvider, IAgentHostSessionsProvider, isAgentHostProvider, LOCAL_AGENT_HOST_PROVIDER_ID } from '../../../../common/agentHostSessionsProvider.js';
+import { getSessionConfigProvider } from '../../../../common/agentHostSessionsProvider.js';
 import { ISessionConfigProvider, ISessionsProvider } from '../../../../services/sessions/common/sessionsProvider.js';
 import { ISessionsProvidersService } from '../../../../services/sessions/browser/sessionsProvidersService.js';
 import { IActiveSession } from '../../../../services/sessions/common/sessionsManagement.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
-import { AgentSandboxEnabledSettingValue, AgentSandboxSettingId, isAgentSandboxEnabledValue } from '../../../../../platform/sandbox/common/settings.js';
-import { CopilotCLISessionType } from './baseAgentHostSessionsProvider.js';
+import { AgentSandboxSettingId } from '../../../../../platform/sandbox/common/settings.js';
+import { AgentHostSessionSandbox } from './agentHostSessionSandbox.js';
+import { COPILOT_CLI_AGENT_PROVIDER_ID } from '../../../../../platform/agentHost/common/agent.js';
 import { IChatPhoneInputPresenter } from '../../../../../workbench/contrib/chat/browser/widget/input/chatPhoneInputPresenter.js';
 import { IWorkbenchEnvironmentService } from '../../../../../workbench/services/environment/common/environmentService.js';
 import { isWellKnownAutoApproveSchema, isWellKnownModeSchema, shouldCombineModeAndPermissions } from '../../../../../workbench/contrib/chat/browser/agentSessions/agentHost/agentHostModePickerPresentation.js';
@@ -50,6 +50,7 @@ export class AgentHostPermissionPickerDelegate extends Disposable implements IPe
 	readonly managedSandboxAllowsBypass: IObservable<boolean>;
 	readonly sandboxEnabled: IObservable<boolean | undefined>;
 	readonly sandboxConfirmedEnabled: IObservable<boolean | undefined>;
+	private readonly _sandboxState: AgentHostSessionSandbox['state'];
 	readonly sandboxToggleSettingId: IObservable<string | undefined>;
 	readonly sandboxToggleConfigurationKeys = [
 		AgentHostCustomTerminalToolEnabledSettingId,
@@ -58,11 +59,7 @@ export class AgentHostPermissionPickerDelegate extends Disposable implements IPe
 
 	readonly getSandboxToggleProvider = (): string | undefined => this._session.get()?.sessionType;
 
-	readonly isSandboxToggleApplicable = (): boolean => {
-		const session = this._session.get();
-		return session?.sessionType === CopilotCLISessionType.id
-			&& !!this._getProvider(session.providerId)?.getSessionConfig(session.sessionId)?.schema.properties[SessionConfigKey.SandboxEnabled];
-	};
+	readonly isSandboxToggleApplicable = (): boolean => this.sandboxToggleSettingId.get() !== undefined;
 
 	readonly getSandboxToggleSettingId = (): string | undefined => this.sandboxToggleSettingId.get();
 
@@ -112,33 +109,17 @@ export class AgentHostPermissionPickerDelegate extends Disposable implements IPe
 		@IWorkbenchEnvironmentService environmentService: IWorkbenchEnvironmentService,
 	) {
 		super();
-		const isDevContainer = derived(this, reader => {
-			this._configChangedSignal.read(reader);
+		const providersChanged = observableSignalFromEvent(this, this._sessionsProvidersService.onDidChangeProviders);
+		this._sandboxState = derived(this, reader => {
+			providersChanged.read(reader);
 			const session = this._session.read(reader);
-			return !!session && this._getAgentHostProvider(session.providerId)?.isDevContainerRequested?.(session.sessionId) === true;
-		});
-		const sandboxPolicy = derived(this, reader => {
-			if (isDevContainer.read(reader)) {
-				// The source host's policy does not describe the pending container session.
-				return undefined;
-			}
-			this._configChangedSignal.read(reader);
-			const session = this._session.read(reader);
-			const policy = session && this._getAgentHostProvider(session.providerId)?.getSessionSandboxPolicy?.(session.sessionId);
-			if (policy || isWeb || environmentService.remoteAuthority || session?.providerId !== LOCAL_AGENT_HOST_PROVIDER_ID || session.sessionType !== CopilotCLISessionType.id) {
-				return policy;
-			}
-			// Local drafts have no SDK policy until their first turn.
-			return {
-				enabled: agentHostEnablementService.managedSandboxEnforced.read(reader),
-				allowBypass: agentHostEnablementService.managedSandboxAllowsBypass.read(reader),
-			};
-		});
-		this.managedSandboxEnforced = derived(this, reader => {
-			const policy = sandboxPolicy.read(reader);
-			return policy?.enabled === true && !policy.failClosed;
-		});
-		this.managedSandboxAllowsBypass = derived(this, reader => sandboxPolicy.read(reader)?.allowBypass === true);
+			return new AgentHostSessionSandbox(session, session && this._sessionsProvidersService.getProvider(session.providerId), this._configurationService, agentHostEnablementService, environmentService).state;
+		}).flatten();
+		this.managedSandboxEnforced = this._sandboxState.map(state => state.managedEnabled);
+		this.managedSandboxAllowsBypass = this._sandboxState.map(state => state.allowsBypass);
+		this.sandboxConfirmedEnabled = this._sandboxState.map(state => state.confirmedEnabled);
+		this.sandboxEnabled = this._sandboxState.map(state => state.sessionEnabled);
+		this.sandboxToggleSettingId = this._sandboxState.map(state => state.provider ? AgentSandboxSettingId.AgentSandboxEnabled : undefined);
 
 		this._watchProviders(this._sessionsProvidersService.getProviders());
 		this._register(this._sessionsProvidersService.onDidChangeProviders(e => {
@@ -155,26 +136,6 @@ export class AgentHostPermissionPickerDelegate extends Disposable implements IPe
 		}));
 
 		this.currentPermissionLevel = derived(this, reader => this._readLevel(reader));
-		this.sandboxConfirmedEnabled = derived(this, reader => {
-			if (isDevContainer.read(reader)) {
-				return undefined;
-			}
-			this._configChangedSignal.read(reader);
-			const session = this._session.read(reader);
-			return session && this._getAgentHostProvider(session.providerId)?.getSessionSandboxEnabled?.(session.sessionId);
-		});
-		this.sandboxEnabled = derived(this, reader => {
-			this._configChangedSignal.read(reader);
-			const session = this._session.read(reader);
-			const provider = session && this._getProvider(session.providerId);
-			const value = session && provider?.getSessionConfig(session.sessionId)?.values[SessionConfigKey.SandboxEnabled];
-			return value === 'on' ? true : value === 'off' ? false : this.sandboxConfirmedEnabled.read(reader);
-		});
-		this.sandboxToggleSettingId = derived(this, reader => {
-			this._configChangedSignal.read(reader);
-			this._session.read(reader);
-			return this.isSandboxToggleApplicable() ? AgentSandboxSettingId.AgentSandboxEnabled : undefined;
-		});
 		this.isModePickerCombined = derived(this, reader => {
 			this._configChangedSignal.read(reader);
 			const session = this._session.read(reader);
@@ -187,12 +148,12 @@ export class AgentHostPermissionPickerDelegate extends Disposable implements IPe
 				&& isSessionConfigWritable(approvalProperty?.schema, isNewSession)
 				&& shouldCombineModeAndPermissions(
 					this._configurationService.getValue<boolean>(ChatConfiguration.ExperimentalModePermissionsPicker) === true,
-					session?.sessionType === CopilotCLISessionType.id || approvalProperty?.key === 'approvalMode',
+					session?.sessionType === COPILOT_CLI_AGENT_PROVIDER_ID || approvalProperty?.key === 'approvalMode',
 					config?.schema.properties[SessionConfigKey.Mode],
 					approvalProperty?.schema,
 				);
 		});
-		this.isApplicable = derived(this, reader => this._readIsWellKnown(reader) && !this.isModePickerCombined.read(reader));
+		this.isApplicable = derived(this, reader => this._sandboxState.read(reader).hasPermissionPicker && !this.isModePickerCombined.read(reader));
 		this.isResolving = derived(this, reader => {
 			this._configChangedSignal.read(reader);
 			const session = this._session.read(reader);
@@ -205,20 +166,7 @@ export class AgentHostPermissionPickerDelegate extends Disposable implements IPe
 	}
 
 	getSandboxToggle() {
-		if (!this.isSandboxToggleApplicable() || this.getSandboxToggleSettingId() === undefined) {
-			return undefined;
-		}
-		return createAgentHostSandboxToggle(() => {
-			const settingId = this.getSandboxToggleSettingId();
-			return {
-				provider: this.getSandboxToggleProvider(),
-				sessionEnabled: this.sandboxEnabled.get(),
-				confirmedEnabled: this.sandboxConfirmedEnabled.get(),
-				globalEnabled: settingId !== undefined && isAgentSandboxEnabledValue(this._configurationService.getValue<AgentSandboxEnabledSettingValue>(settingId)),
-				managedEnabled: this.managedSandboxEnforced.get(),
-				allowsBypass: this.managedSandboxAllowsBypass.get(),
-			};
-		}, enabled => this.setSandboxEnabled(enabled));
+		return createAgentHostSandboxToggle(() => this._sandboxState.get(), enabled => this.setSandboxEnabled(enabled));
 	}
 
 	setSandboxEnabled(enabled: boolean): void {
@@ -299,28 +247,9 @@ export class AgentHostPermissionPickerDelegate extends Disposable implements IPe
 		return isChatPermissionLevel(value) ? value : ChatPermissionLevel.Default;
 	}
 
-	private _readIsWellKnown(reader: IReader): boolean {
-		this._configChangedSignal.read(reader);
-		const session = this._session.read(reader);
-		if (!session) {
-			return false;
-		}
-		const provider = this._getProvider(session.providerId);
-		if (!provider) {
-			return false;
-		}
-		const approvalProperty = getSessionApprovalProperty(provider.getSessionConfig(session.sessionId)?.schema);
-		return !!approvalProperty && isSessionConfigWritable(approvalProperty.schema, provider.getCreateSessionConfig(session.sessionId) !== undefined);
-	}
-
 	private _getProvider(providerId: string): ISessionConfigProvider | undefined {
 		const provider = this._sessionsProvidersService.getProvider(providerId);
 		return provider && getSessionConfigProvider(provider);
-	}
-
-	private _getAgentHostProvider(providerId: string): IAgentHostSessionsProvider | undefined {
-		const provider = this._sessionsProvidersService.getProvider(providerId);
-		return provider && isAgentHostProvider(provider) ? provider : undefined;
 	}
 
 	private _watchProviders(providers: readonly ISessionsProvider[]): void {

@@ -11,7 +11,7 @@ import { CancellationTokenSource } from '../../../../../base/common/cancellation
 import { Emitter } from '../../../../../base/common/event.js';
 import { DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
-import { constObservable, IObservable, observableValue, transaction } from '../../../../../base/common/observable.js';
+import { autorun, constObservable, IObservable, observableValue, transaction } from '../../../../../base/common/observable.js';
 import { MarkdownString } from '../../../../../base/common/htmlContent.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { mock } from '../../../../../base/test/common/mock.js';
@@ -37,7 +37,7 @@ import { ChatModel, ChatResponseModel, IChatModel, IChatModelInputState, IChatRe
 import { ChatModelStore, IStartSessionProps } from '../../../../../workbench/contrib/chat/common/model/chatModelStore.js';
 import { ModelSelectionReason } from '../../../../../workbench/contrib/chat/common/modelSelection.js';
 import { IChatAgentService } from '../../../../../workbench/contrib/chat/common/participants/chatAgents.js';
-import { ISendRequestOptions } from '../../../../services/sessions/common/sessionsProvider.js';
+import { ISendRequestOptions, ISessionsProvider } from '../../../../services/sessions/common/sessionsProvider.js';
 import { ChatWidget } from '../../../../../workbench/contrib/chat/browser/widget/chatWidget.js';
 import { ChatContextKeys } from '../../../../../workbench/contrib/chat/common/actions/chatContextKeys.js';
 import { workbenchInstantiationService } from '../../../../../workbench/test/browser/workbenchTestServices.js';
@@ -46,6 +46,8 @@ import { MODE_PERMISSIONS_PICKER_OPEN_ATTRIBUTE } from '../../../../../workbench
 import { IActiveSession, ISessionsManagementService } from '../../../../services/sessions/common/sessionsManagement.js';
 import { ChatInteractivity, IChat, ISession, ISessionPreparationProgress, SessionStatus } from '../../../../services/sessions/common/session.js';
 import { ISessionComparison, SessionComparisonParticipantRole } from '../../../../services/sessions/common/sessionComparison.js';
+import { ISessionsProvidersChangeEvent, ISessionsProvidersService, observeSessionSandboxToggle } from '../../../../services/sessions/browser/sessionsProvidersService.js';
+import { SessionContext } from '../../../../services/sessions/browser/sessionContext.js';
 import { ISessionsService } from '../../../../services/sessions/browser/sessionsService.js';
 import { SessionsChatBackgroundRenderer, SessionsChatBackgroundReplica } from '../../../../services/chatBackground/browser/chatBackgroundRenderer.js';
 import { ISessionsChatBackground } from '../../../../services/chatBackground/browser/chatBackgroundService.js';
@@ -1085,11 +1087,42 @@ suite('Sessions - Chat View', () => {
 		assert.strictEqual(isVisible.get(), false);
 	});
 
-	test('configures the peer chat composer without repository controls', () => {
-		let inputOptions: { readonly renderRepositoryControls?: boolean } | undefined;
+	test('sandbox indicator drops stale state when the composer changes session or the provider disconnects', () => {
+		const first = new class extends mock<ISession>() { override readonly providerId = 'test'; }();
+		const second = new class extends mock<ISession>() { override readonly providerId = 'test'; }();
+		const firstChecked = observableValue(disposables, true);
+		const secondChecked = observableValue(disposables, false);
+		const provider = new class extends mock<ISessionsProvider>() {
+			override getSandboxToggleChecked(session: ISession): IObservable<boolean> { return session === first ? firstChecked : secondChecked; }
+		}();
+		const changed = disposables.add(new Emitter<ISessionsProvidersChangeEvent>());
+		let connected = true;
+		const providers = new class extends mock<ISessionsProvidersService>() {
+			override readonly onDidChangeProviders = changed.event;
+			override getProvider<T extends ISessionsProvider>(): T | undefined { return connected ? provider as ISessionsProvider as T : undefined; }
+		}();
+		const session = observableValue<ISession | undefined>(disposables, first);
+		const checked = observeSessionSandboxToggle(session, providers);
+		const states: boolean[] = [];
+		disposables.add(autorun(reader => states.push(checked.read(reader))));
+		session.set(second, undefined);
+		firstChecked.set(false, undefined);
+		firstChecked.set(true, undefined);
+		secondChecked.set(true, undefined);
+		connected = false;
+		changed.fire({ added: [], removed: [provider] });
+		connected = true;
+		changed.fire({ added: [provider], removed: [] });
+		session.set(undefined, undefined);
+		assert.deepStrictEqual(states, [true, false, true, false, true, false]);
+	});
+
+	test('binds the peer chat composer to its own session without repository controls', () => {
+		const session = observableValue<IActiveSession | undefined>(disposables, new class extends mock<IActiveSession>() { }());
+		let inputOptions: { readonly renderRepositoryControls?: boolean; readonly session: typeof session } | undefined;
 		const input = Object.assign(Object.create(NewChatInputWidget.prototype), { dispose: () => { } }) as NewChatInputWidget;
 		const instantiationService = new class extends mock<IInstantiationService>() {
-			override createInstance = ((ctor: unknown, options: { readonly renderRepositoryControls?: boolean }) => {
+			override createInstance = ((ctor: unknown, options: { readonly renderRepositoryControls?: boolean; readonly session: typeof session }) => {
 				assert.strictEqual(ctor, NewChatInputWidget);
 				inputOptions = options;
 				return input;
@@ -1105,10 +1138,12 @@ suite('Sessions - Chat View', () => {
 			new class extends mock<ILogService>() { }(),
 			new class extends mock<ISessionsManagementService>() { }(),
 			sessionsService,
+			new SessionContext(session),
 			new class extends mock<IStorageService>() { }(),
 		));
 
 		assert.strictEqual(inputOptions?.renderRepositoryControls, false);
+		assert.strictEqual(inputOptions?.session.get(), session.get());
 	});
 
 	test('positions peer chat content for centered attachment growth', () => {

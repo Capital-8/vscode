@@ -12,8 +12,9 @@ import { Delayer } from '../../../../../../base/common/async.js';
 import { CancellationTokenSource } from '../../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../../base/common/codicons.js';
 import { CancellationError, isCancellationError, onUnexpectedError } from '../../../../../../base/common/errors.js';
+import { Event } from '../../../../../../base/common/event.js';
 import { Disposable, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../../base/common/lifecycle.js';
-import { autorun, observableSignal } from '../../../../../../base/common/observable.js';
+import { autorun, derived, observableSignal } from '../../../../../../base/common/observable.js';
 import { isWeb } from '../../../../../../base/common/platform.js';
 import { isEqual } from '../../../../../../base/common/resources.js';
 import { ThemeIcon } from '../../../../../../base/common/themables.js';
@@ -412,6 +413,13 @@ export class AgentHostChatInputPicker extends Disposable {
 	private readonly _splitTrigger = this._register(new MutableDisposable<IModePickerTrigger>());
 	private readonly _pickerDisposables = this._register(new DisposableStore());
 	private readonly _sandboxConfigChanged = observableSignal(this);
+	readonly sandboxToggleChecked = derived(this, reader => {
+		this._sandboxConfigChanged.read(reader);
+		this._agentHostEnablementService.managedSandboxEnforced.read(reader);
+		this._agentHostEnablementService.managedSandboxAllowsBypass.read(reader);
+		const permissions = this._readContext();
+		return !!permissions && this._canEdit(permissions) && !!getSessionApprovalProperty(permissions.configSchema) && this._getSandboxStandaloneToggle()?.checked === true;
+	});
 	private readonly _filterDelayer = this._register(new Delayer<readonly IActionListItem<IConfigPickerItem>[]>(200));
 	private readonly _subRef = this._register(new MutableDisposable<IDisposable & IConfigPickerTarget & { readonly sub: IAgentSubscription<SessionState> }>());
 	private _sessionGeneration = 0;
@@ -507,6 +515,13 @@ export class AgentHostChatInputPicker extends Disposable {
 		this._renderChip();
 	}
 
+	unrender(): void {
+		this._container = undefined;
+		this._trigger = undefined;
+		this._splitTrigger.clear();
+		this._renderDisposables.clear();
+	}
+
 	show(anchor: HTMLElement): void {
 		void this._showPicker(anchor).catch(onUnexpectedError);
 	}
@@ -557,10 +572,7 @@ export class AgentHostChatInputPicker extends Disposable {
 		this._cancelInitialResolve();
 		const ref = resolution.connection.getSubscription(StateComponents.Session, resolution.backendSession, 'AgentHostChatInputPicker');
 		const sub = ref.object;
-		const listener = sub.onDidChange(() => {
-			this._renderChip();
-			this._sandboxConfigChanged.trigger(undefined);
-		});
+		const listener = Event.any(sub.onDidChange, sub.onDidError ?? Event.None)(() => this._renderChip());
 		const creationListener = retrySessionConfigSubscriptionOnCreation(resolution.connection, resolution.backendSession, sub, () => this._reattach());
 		this._subRef.value = {
 			...resolution,
@@ -601,6 +613,7 @@ export class AgentHostChatInputPicker extends Disposable {
 	}
 
 	private _renderChip(): void {
+		this._sandboxConfigChanged.trigger(undefined);
 		if (!this._container || this._renderDisposables.isDisposed) {
 			return;
 		}
@@ -1208,9 +1221,9 @@ export class AgentHostChatInputPicker extends Disposable {
 }
 
 export class AgentHostChatInputPickerActionViewItem extends BaseActionViewItem {
-	constructor(action: IAction, private readonly _picker: AgentHostChatInputPicker) {
+	constructor(action: IAction, private readonly _picker: AgentHostChatInputPicker, retainPicker = false) {
 		super(undefined, action);
-		this._register(this._picker);
+		this._register(retainPicker ? toDisposable(() => this._picker.unrender()) : this._picker);
 	}
 	override render(container: HTMLElement): void {
 		this._picker.render(container);

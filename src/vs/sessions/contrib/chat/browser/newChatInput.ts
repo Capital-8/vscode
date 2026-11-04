@@ -32,6 +32,7 @@ import { EditorOptions } from '../../../../editor/common/config/editorOptions.js
 import { SuggestController } from '../../../../editor/contrib/suggest/browser/suggestController.js';
 import { SnippetController2 } from '../../../../editor/contrib/snippet/browser/snippetController2.js';
 import { CopyPasteController } from '../../../../editor/contrib/dropOrPasteInto/browser/copyPasteController.js';
+import { bindSandboxPlaceholder } from '../../../../workbench/contrib/chat/browser/widget/input/editor/chatInputSandboxContribution.js';
 import { PlaceholderTextContribution } from '../../../../editor/contrib/placeholderText/browser/placeholderTextContribution.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { ContextKeyExpr, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
@@ -62,6 +63,7 @@ import { inactiveSessionViewBackground, inactiveSessionViewForeground } from '..
 import { INewChatVoiceTargetService, isNewChatStandaloneDictationVisible, isNewChatVoiceInputModePillActive, isNewChatVoiceSessionActive, NEW_CHAT_VOICE_SENTINEL, NewChatVoiceController } from './newChatVoice.js';
 import { ISessionTypePickerOptions, SessionTypePicker } from './sessionTypePicker.js';
 import { IActiveSession } from '../../../services/sessions/common/sessionsManagement.js';
+import { ISessionsProvidersService, observeSessionSandboxToggle } from '../../../services/sessions/browser/sessionsProvidersService.js';
 import { SessionStatus } from '../../../services/sessions/common/session.js';
 import { MobileSessionTypePicker } from './mobile/mobileSessionTypePicker.js';
 import { installMobileChipLaneScroll } from '../../../browser/parts/mobile/mobileChipLaneScroll.js';
@@ -675,6 +677,7 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 		@IChatPetWidgetService private readonly chatPetWidgetService: IChatPetWidgetService,
 		@IChatInputNotificationService private readonly chatInputNotificationService: IChatInputNotificationService,
 		@ILanguageModelsService private readonly languageModelsService: ILanguageModelsService,
+		@ISessionsProvidersService private readonly sessionsProvidersService: ISessionsProvidersService,
 	) {
 		super();
 		this._modelSelection = this._register(this.instantiationService.createInstance(SessionModelSelection, this.options.session, { workflow: this.options.modelPickerWorkflow }));
@@ -1104,13 +1107,14 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 		const textModel = this.modelService.createModel('', null, uri, true);
 		this._holdInputModelReference(uri, textModel);
 
+		const placeholder = this.options.placeholder ?? getRandomChatInputPlaceholder();
 		const editorOptions: IEditorConstructionOptions = {
 			...getSimpleEditorOptions(this.configurationService),
 			readOnly: false,
 			// Match the workbench chat input so the post-paste selector is offered.
 			pasteAs: EditorOptions.pasteAs.defaultValue,
 			ariaLabel: this._getAriaLabel(),
-			placeholder: this.options.placeholder ?? getRandomChatInputPlaceholder(),
+			placeholder,
 			fontFamily: NEW_CHAT_INPUT_FONT_FAMILY,
 			fontSize: 13,
 			lineHeight: 20,
@@ -1151,6 +1155,7 @@ export class NewChatInputWidget extends Disposable implements IHistoryNavigation
 			CodeEditorWidget, editorContainer, editorOptions, widgetOptions,
 		));
 		this._editor.setModel(textModel);
+		this._register(bindSandboxPlaceholder(this._editor, () => placeholder, observeSessionSandboxToggle(this.options.session, this.sessionsProvidersService)));
 		this._promptTemplatePlaceholder.value = new PromptTemplatePlaceholderController(this._editor, () => this._promptTypingAnimation.value?.complete());
 		this._register(autorun(reader => {
 			// Re-evaluate when the attached session changes; content changes are

@@ -19,6 +19,7 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IActiveSession, ISessionsManagementService } from '../../../services/sessions/common/sessionsManagement.js';
+import { ISessionContext } from '../../../services/sessions/browser/sessionContext.js';
 import { ISessionsService } from '../../../services/sessions/browser/sessionsService.js';
 import { NewChatInputWidget } from './newChatInput.js';
 import { isExperimentalSessionComposerLayoutEnabled } from './newChatWidget.js';
@@ -58,6 +59,7 @@ export class NewChatInSessionWidget extends Disposable {
 		@ILogService private readonly logService: ILogService,
 		@ISessionsManagementService private readonly sessionsManagementService: ISessionsManagementService,
 		@ISessionsService private readonly sessionsService: ISessionsService,
+		@ISessionContext sessionContext: ISessionContext,
 		@IStorageService private readonly storageService: IStorageService,
 	) {
 		super();
@@ -70,10 +72,7 @@ export class NewChatInSessionWidget extends Disposable {
 			() => isExperimentalSessionComposerLayoutEnabled(this.configurationService),
 		);
 
-		this._session = derived(reader => {
-			const activeSession = this.sessionsService.activeSession.read(reader);
-			return activeSession;
-		});
+		this._session = sessionContext.session;
 
 		const canSendRequest = derived(reader => {
 			const session = this._session.read(reader);

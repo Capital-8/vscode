@@ -22,13 +22,13 @@ import { NullTelemetryService } from '../../../../../../../platform/telemetry/co
 import { AgentHostPermissionPickerActionItem } from '../../../browser/agentHostPermissionPickerActionItem.js';
 import { Emitter, Event } from '../../../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../../../base/common/lifecycle.js';
-import { constObservable, observableValue } from '../../../../../../../base/common/observable.js';
+import { autorun, constObservable, observableValue } from '../../../../../../../base/common/observable.js';
 import { isWeb } from '../../../../../../../base/common/platform.js';
 import { DeferredPromise, timeout } from '../../../../../../../base/common/async.js';
 import { URI } from '../../../../../../../base/common/uri.js';
-import { mock } from '../../../../../../../base/test/common/mock.js';
+import { mock, upcastPartial } from '../../../../../../../base/test/common/mock.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../../base/test/common/utils.js';
-import { type IConfigurationOverrides, IConfigurationService } from '../../../../../../../platform/configuration/common/configuration.js';
+import { type IConfigurationChangeEvent, type IConfigurationOverrides, IConfigurationService } from '../../../../../../../platform/configuration/common/configuration.js';
 import { TestInstantiationService } from '../../../../../../../platform/instantiation/test/common/instantiationServiceMock.js';
 import { ResolveSessionConfigResult, SessionConfigPropertySchema } from '../../../../../../../platform/agentHost/common/state/protocol/commands.js';
 import { IAgentConnection, IAgentHostNetworkDiagnosticsInfo } from '../../../../../../../platform/agentHost/common/agentService.js';
@@ -41,6 +41,7 @@ import { SessionConfigKey } from '../../../../../../../platform/agentHost/common
 import type { ISessionSandboxPolicy } from '../../../../../../../platform/agentHost/common/meta/agentSandboxPolicyMeta.js';
 import type { RootConfigState } from '../../../../../../../platform/agentHost/common/state/protocol/state.js';
 import { ChatPermissionLevel } from '../../../../../../../workbench/contrib/chat/common/constants.js';
+import { AgentHostSessionSandbox } from '../../../browser/agentHostSessionSandbox.js';
 import { AgentHostPermissionPickerDelegate, isWellKnownAutoApproveSchema, isWellKnownClaudePermissionModeSchema, isWellKnownModeSchema, isWellKnownModeValue } from '../../../browser/agentHostPermissionPickerDelegate.js';
 import { getPermissionLevelMeta } from '../../../../copilotChatSessions/browser/permissionPicker.js';
 import { IAgentHostSessionsProvider } from '../../../../../../common/agentHostSessionsProvider.js';
@@ -727,6 +728,42 @@ suite('AgentHostPermissionPickerDelegate', () => {
 			firstSessionValue: false,
 			secondSessionValue: true,
 			restoredFirstSessionValue: false,
+		});
+	});
+
+	test('composer follows the checked permissions toggle across defaults, overrides, policy, and schema changes', async () => {
+		const session = makeActiveSession();
+		const configuration = new TestConfigurationService();
+		store.add(configuration.onDidChangeConfigurationEmitter);
+		const { instantiationService, provider, delegate } = setup(store, session, 'default', undefined, undefined, configuration);
+		const sandbox = instantiationService.createInstance(AgentHostSessionSandbox, session, instantiationService.get(ISessionsProvidersService).getProvider(session.providerId));
+		const values: boolean[] = [];
+		store.add(autorun(reader => values.push(sandbox.checked.read(reader))));
+		const pickerValues = [delegate.getSandboxToggle()?.checked];
+
+		const setting = AgentSandboxSettingId.AgentSandboxEnabled;
+		await configuration.setUserConfiguration(setting, 'on');
+		configuration.onDidChangeConfigurationEmitter.fire(upcastPartial<IConfigurationChangeEvent>({ affectsConfiguration: key => key === setting }));
+		pickerValues.push(delegate.getSandboxToggle()?.checked);
+		provider.config!.values[SessionConfigKey.SandboxEnabled] = 'off';
+		provider.fireChange();
+		pickerValues.push(delegate.getSandboxToggle()?.checked);
+		provider.sandboxPolicies.set(session.sessionId, { enabled: true });
+		provider.fireChange();
+		pickerValues.push(delegate.getSandboxToggle()?.checked);
+		const approval = provider.config!.schema.properties.autoApprove;
+		delete provider.config!.schema.properties.autoApprove;
+		provider.fireChange();
+		pickerValues.push(delegate.isApplicable.get() ? delegate.getSandboxToggle()?.checked : undefined);
+		provider.config!.schema.properties.autoApprove = approval;
+		provider.fireChange();
+		pickerValues.push(delegate.getSandboxToggle()?.checked);
+		delete provider.config!.schema.properties[SessionConfigKey.SandboxEnabled];
+		provider.fireChange();
+		pickerValues.push(delegate.getSandboxToggle()?.checked);
+
+		assert.deepStrictEqual({ values, pickerValues }, {
+			values: [false, true, false, true, false, true, false], pickerValues: [false, true, false, true, undefined, true, undefined],
 		});
 	});
 

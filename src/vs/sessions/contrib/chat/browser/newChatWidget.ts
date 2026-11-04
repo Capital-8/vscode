@@ -13,7 +13,7 @@ import { toErrorMessage } from '../../../../base/common/errorMessage.js';
 import { isCancellationError, onUnexpectedError } from '../../../../base/common/errors.js';
 import { Event } from '../../../../base/common/event.js';
 import { Disposable, DisposableMap, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
-import { autorun, constObservable, derived, derivedObservableWithCache, disposableObservableValue, IObservable, observableFromEvent, observableSignalFromEvent, observableValue, waitForState } from '../../../../base/common/observable.js';
+import { autorun, constObservable, derived, disposableObservableValue, IObservable, observableFromEvent, observableSignalFromEvent, observableValue, waitForState } from '../../../../base/common/observable.js';
 import { isWeb } from '../../../../base/common/platform.js';
 import { basename, isEqual } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
@@ -33,6 +33,7 @@ import { deriveGitHubEndpoints } from '../../../../platform/github/common/github
 import { asJson, IRequestService, isSuccess } from '../../../../platform/request/common/request.js';
 import { localize } from '../../../../nls.js';
 import { IActiveSession, ICreateNewSessionOptions, ISessionsManagementService, WorkspaceNotTrustedError } from '../../../services/sessions/common/sessionsManagement.js';
+import { ISessionContext } from '../../../services/sessions/browser/sessionContext.js';
 import { GITHUB_REMOTE_FILE_SCHEME, ISession, ISessionWorkspace, SESSION_WORKSPACE_GROUP_GITHUB } from '../../../services/sessions/common/session.js';
 import { IOpenNewSessionResult, ISessionsService } from '../../../services/sessions/browser/sessionsService.js';
 import { ISessionsProvidersService } from '../../../services/sessions/browser/sessionsProvidersService.js';
@@ -207,6 +208,7 @@ export class NewChatWidget extends Disposable {
 		@ILogService private readonly logService: ILogService,
 		@ISessionsManagementService private readonly sessionsManagementService: ISessionsManagementService,
 		@ISessionsService private readonly sessionsService: ISessionsService,
+		@ISessionContext sessionContext: ISessionContext,
 		@ISessionsProvidersService private readonly sessionsProvidersService: ISessionsProvidersService,
 		@ISessionsRecentWorkspacesService private readonly recentWorkspacesService: ISessionsRecentWorkspacesService,
 		@IAquariumService private readonly aquariumService: IAquariumService,
@@ -234,15 +236,7 @@ export class NewChatWidget extends Disposable {
 
 		this._restoreSessionOptionsExpanded();
 
-		// TODO: @sandy081 The session/chat should be passed down. There should not be sessionsService.activeSession read in the widget.
-		this._session = derivedObservableWithCache<IActiveSession | undefined>(this, (reader, prev) => {
-			const activeSession = this.sessionsService.activeSession.read(reader);
-			if (activeSession && activeSession.isCreated.read(reader)) {
-				return prev;
-			}
-
-			return activeSession;
-		});
+		this._session = sessionContext.session;
 
 		// A quick chat is workspace-less; the composer hides the workspace picker
 		// (nothing to pick) and surfaces the session-type picker in the controls.

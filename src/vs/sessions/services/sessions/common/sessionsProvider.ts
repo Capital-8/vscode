@@ -191,6 +191,8 @@ export interface IDeleteChatOptions {
  */
 export interface ISessionsProvider {
 	readonly sessionConfig?: ISessionConfigProvider;
+	/** The state of this session's terminal sandbox toggle, when the provider offers one. */
+	getSandboxToggleChecked?(session: ISession): IObservable<boolean>;
 	/**
 	 * Unique identifier for the provider.
 	 */

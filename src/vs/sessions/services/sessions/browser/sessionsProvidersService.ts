@@ -7,6 +7,8 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
+import { derived, IObservable, observableSignalFromEvent } from '../../../../base/common/observable.js';
+import { ISession } from '../common/session.js';
 import { ISessionsProvider } from '../common/sessionsProvider.js';
 
 export const ISessionsProvidersService = createDecorator<ISessionsProvidersService>('sessionsProvidersService');
@@ -28,6 +30,19 @@ export interface ISessionsProvidersService {
 	 */
 	getProviders(): ISessionsProvider[];
 	getProvider<T extends ISessionsProvider>(providerId: string): T | undefined;
+}
+
+export function observeSessionSandboxToggle(session: IObservable<ISession | undefined>, providers: ISessionsProvidersService): IObservable<boolean> {
+	const providersChanged = observableSignalFromEvent('sandboxToggle.providers', providers.onDidChangeProviders);
+	const checked = derived(reader => {
+		const current = session.read(reader);
+		if (!current) {
+			return undefined;
+		}
+		providersChanged.read(reader);
+		return providers.getProvider(current.providerId)?.getSandboxToggleChecked?.(current);
+	});
+	return derived(reader => checked.read(reader)?.read(reader) === true);
 }
 
 class SessionsProvidersService extends Disposable implements ISessionsProvidersService {

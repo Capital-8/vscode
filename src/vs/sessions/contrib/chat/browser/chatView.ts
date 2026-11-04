@@ -45,6 +45,7 @@ import { ChatRequestTextPart } from '../../../../workbench/contrib/chat/common/r
 import { Range } from '../../../../editor/common/core/range.js';
 import { OffsetRange } from '../../../../editor/common/core/ranges/offsetRange.js';
 import { ISessionsManagementService } from '../../../services/sessions/common/sessionsManagement.js';
+import { ISessionsProvidersService, observeSessionSandboxToggle } from '../../../services/sessions/browser/sessionsProvidersService.js';
 import { ISendRequestOptions } from '../../../services/sessions/common/sessionsProvider.js';
 import { ChatAgentLocation, ChatModeKind } from '../../../../workbench/contrib/chat/common/constants.js';
 import { getChatSessionType } from '../../../../workbench/contrib/chat/common/model/chatUri.js';
@@ -327,6 +328,7 @@ export class ChatView extends AbstractChatView {
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 		@ISessionsManagementService private readonly sessionsManagementService: ISessionsManagementService,
 		@ISessionComparisonService private readonly comparisonService: ISessionComparisonService,
+		@ISessionsProvidersService sessionsProvidersService: ISessionsProvidersService,
 	) {
 		super();
 		this._register(toDisposable(() => this._reportModelUnbound()));
@@ -376,6 +378,7 @@ export class ChatView extends AbstractChatView {
 				renderSecondaryToolbar: shouldRenderRunningSessionSecondaryToolbar(initiallyUsesExperimentalComposerLayout),
 				inputEditorMinLines: 2,
 				isSessionsWindow: true,
+				sandboxToggleChecked: observeSessionSandboxToggle(this._currentSessionObs, sessionsProvidersService),
 				transcriptTabIndex: -1,
 				enableFind: true,
 				persistentContentHeight: SESSION_CHAT_INPUT_TOOLBAR_HEIGHT,
