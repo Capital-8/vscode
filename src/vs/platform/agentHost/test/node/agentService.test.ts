@@ -3189,10 +3189,17 @@ suite('AgentService (node dispatcher)', () => {
 
 		test('an older build\'s archive and delete of peers imported while their session is loaded reach live state and its subscribers', async () => {
 			class ChatAgent extends MockAgent {
+				readonly cleared: { session: string; chat?: string }[] = [];
+
 				override async createChat(): Promise<IAgentCreateChatResult> { return { providerData: 'peer-backing' }; }
+
+				clearCanvasContinuity(session: URI, chat?: URI): void {
+					this.cleared.push({ session: session.toString(), ...(chat ? { chat: chat.toString() } : {}) });
+				}
 			}
 			const svc = disposables.add(createTestAgentService(new NullLogService(), fileService, createPerSessionDataService().service, { _serviceBrand: undefined } as IProductService, createNoopGitService()));
-			registerTestAgentProvider(svc, disposables.add(new ChatAgent('copilot')));
+			const agent = disposables.add(new ChatAgent('copilot'));
+			registerTestAgentProvider(svc, agent);
 			const session = await svc.createSession({ legacyChatUris: true, provider: 'copilot' });
 			const archived = URI.parse(buildChatUri(session, 'archived-by-old-build'));
 			const deleted = URI.parse(buildChatUri(session, 'deleted-by-old-build'));
@@ -3223,7 +3230,13 @@ suite('AgentService (node dispatcher)', () => {
 				archived: isSessionStatusArchived(chats.find(chat => chat.resource === archived.toString())?.status),
 				deletedListed: chats.some(chat => chat.resource === deleted.toString()),
 				emitted: emitted.sort(),
-			}, { archived: true, deletedListed: false, emitted: [ActionType.ChatIsArchivedChanged, ActionType.SessionChatRemoved] });
+				cleared: agent.cleared,
+			}, {
+				archived: true,
+				deletedListed: false,
+				emitted: [ActionType.ChatIsArchivedChanged, ActionType.SessionChatRemoved],
+				cleared: [{ session: session.toString(), chat: archived.toString() }],
+			});
 		});
 
 		test('a chat catalog migration that ends without converting is logged at warn once per reason; a wait for re-projection only after repeated attempts, never for a provisional session', () => {
@@ -27093,8 +27106,16 @@ suite('AgentService (node dispatcher)', () => {
 				}
 			}
 			const agent = disposables.add(new ContinuityTrackingAgent('copilot'));
+			const peerAgent = disposables.add(new ContinuityTrackingAgent('other'));
 			registerTestAgentProvider(localService, agent);
+			registerTestAgentProvider(localService, peerAgent);
 			const session = await localService.createSession({ legacyChatUris: true, provider: 'copilot' });
+			const peer = URI.parse(buildChatUri(session, 'other-provider'));
+			const defaultChat = getStateManager(localService).getDefaultChat(session.toString())!;
+			getStateManager(localService).addChat(session.toString(), peer.toString(), creationTimeChatStorageResource(session.toString(), peer.toString(), defaultChat), { provider: peerAgent.id });
+			(localService as unknown as {
+				_providerService: { associateChat(chat: URI | string, provider: string): void };
+			})._providerService.associateChat(peer, peerAgent.id);
 			const summary = getStateManager(localService).getSessionSummary(session.toString())!;
 			getStateManager(localService).prepareSessionSummariesForListing([summary]);
 			getStateManager(localService).removeSession(session.toString());
@@ -27106,11 +27127,13 @@ suite('AgentService (node dispatcher)', () => {
 			assert.deepStrictEqual({
 				archived,
 				cleared: agent.cleared,
+				peerCleared: peerAgent.cleared,
 				persisted: await db.getMetadata(AH_META_IS_ARCHIVED_DB_KEY),
 				archivedStatus: getStateManager(localService).getSurfacedSessionSummary(session.toString())?.status,
 			}, {
 				archived: true,
 				cleared: [{ session: session.toString() }],
+				peerCleared: [{ session: session.toString(), chat: peer.toString() }],
 				persisted: 'true',
 				archivedStatus: SessionStatus.Idle | SessionStatus.IsArchived,
 			});

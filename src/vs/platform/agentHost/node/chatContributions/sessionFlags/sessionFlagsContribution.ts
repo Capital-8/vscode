@@ -67,9 +67,14 @@ export class SessionFlagsContribution extends Disposable implements IAgentHostCh
 					const session = URI.parse(dispatched.session);
 					const sessionProvider = this._providerService.getProviderForSession(session);
 					sessionProvider?.clearCanvasContinuity?.(session);
-					for (const chat of this._stateManager.getSessionState(dispatched.session)?.chats ?? []) {
+					const chats = this._stateManager.getSessionState(dispatched.session)?.chats
+						?? this._stateManager.getSurfacedSessionSummary(dispatched.session)?.chats
+						?? [];
+					for (const chat of chats) {
 						const chatResource = URI.parse(chat.resource);
-						const chatProvider = this._providerService.getProviderForChat(session, chatResource);
+						const chatProvider = chat.provider
+							? this._providerService.getProvider(chat.provider)
+							: this._providerService.getProviderForChat(session, chatResource);
 						if (chatProvider !== sessionProvider) {
 							chatProvider?.clearCanvasContinuity?.(session, chatResource);
 						}

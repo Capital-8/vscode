@@ -999,7 +999,7 @@ function createBuiltInContributions(disposables: ReturnType<typeof ensureNoDispo
 	};
 	disposables.add(service.registerHost(host));
 	disposables.add(registerBuiltInChatContributions(service));
-	return { service, stateManager, database: usageDatabase, sessionDataService, fileService, session: 'agent-host-session://test', worktree, worktreeCleanup, additionalWorktreeLifecycle, sessionRegistry, changesets, checkpointService, logService, gitStateService, gitService, agentConfigService, localTurns, chatRows, sessionStateStore, artifactIntegrationDirectory };
+	return { service, stateManager, database: usageDatabase, sessionDataService, fileService, session: 'agent-host-session://test', worktree, worktreeCleanup, additionalWorktreeLifecycle, sessionRegistry, changesets, checkpointService, logService, gitStateService, gitService, agentConfigService, localTurns, chatRows, sessionStateStore, artifactIntegrationDirectory, providerService };
 }
 
 function configureRemoteSessionReply(stateManager: AgentHostStateManager, session: string, options?: { readonly metadata?: Record<string, unknown>; readonly enabled?: boolean }): Record<string, unknown> {
@@ -3480,6 +3480,38 @@ suite('AgentHostChatContributions', () => {
 			isArchived: undefined,
 			configValues: JSON.stringify({ mode: 'plan', autoApprove: 'default' }),
 		});
+	});
+
+	test('clears session and cross-provider peer canvas continuity when an unloaded session is archived', () => {
+		const contributions = createBuiltInContributions(disposables);
+		const session = URI.parse(contributions.session);
+		const peer = URI.parse(buildChatUri(session, 'cross-provider'));
+		contributions.stateManager.addChat(contributions.session, peer.toString(), creationTimeChatStorageResource(contributions.session, peer.toString(), buildDefaultChatUri(contributions.session)), { provider: 'peer' });
+		const summary = contributions.stateManager.getSessionSummary(contributions.session);
+		assert.ok(summary);
+		contributions.stateManager.prepareSessionSummariesForListing([summary]);
+		contributions.stateManager.removeSession(contributions.session);
+		const cleared: { provider: string; session: string; chat?: string }[] = [];
+		const sessionProvider = disposables.add(new class extends MockAgent {
+			clearCanvasContinuity(targetSession: URI, chat?: URI): void {
+				cleared.push({ provider: 'session', session: targetSession.toString(), ...(chat ? { chat: chat.toString() } : {}) });
+			}
+		}('session'));
+		const chatProvider = disposables.add(new class extends MockAgent {
+			clearCanvasContinuity(targetSession: URI, chat?: URI): void {
+				cleared.push({ provider: 'chat', session: targetSession.toString(), ...(chat ? { chat: chat.toString() } : {}) });
+			}
+		}('peer'));
+		contributions.providerService.getProviderForSession = () => sessionProvider;
+		contributions.providerService.getProvider = provider => provider === 'peer' ? chatProvider : undefined;
+		contributions.providerService.getProviderForChat = (_session, chat) => chat?.toString() === peer.toString() ? chatProvider : sessionProvider;
+
+		contributions.service.didDispatchAction(dispatchedAction(contributions.session, contributions.session, { type: ActionType.SessionIsArchivedChanged, isArchived: true }));
+
+		assert.deepStrictEqual(cleared, [
+			{ provider: 'session', session: contributions.session },
+			{ provider: 'chat', session: contributions.session, chat: peer.toString() },
+		]);
 	});
 
 	test('keeps sandbox selections live without persisting them through session metadata', async () => {

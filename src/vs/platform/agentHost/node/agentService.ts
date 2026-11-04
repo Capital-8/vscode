@@ -2383,7 +2383,17 @@ export class AgentService extends Disposable implements IAgentService {
 					this._savedChatArchivePublications.delete(action);
 				}
 			} else {
-				this._providerService.getProviderForSession(session)?.clearCanvasContinuity?.(session);
+				const sessionProvider = this._providerService.getProviderForSession(session);
+				sessionProvider?.clearCanvasContinuity?.(session);
+				for (const chat of this._stateManager.getSurfacedSessionSummary(key)?.chats ?? []) {
+					const chatResource = URI.parse(chat.resource);
+					const chatProvider = chat.provider
+						? this._providerService.getProvider(chat.provider)
+						: this._providerService.getProviderForChat(session, chatResource);
+					if (chatProvider !== sessionProvider) {
+						chatProvider?.clearCanvasContinuity?.(session, chatResource);
+					}
+				}
 				this._stateManager.setSurfacedSessionStatusFlag(key, SessionStatus.IsArchived, true);
 				this._clearAgentMergeIndex(session);
 			}
@@ -2394,7 +2404,11 @@ export class AgentService extends Disposable implements IAgentService {
 			if (this._stateManager.getChatState(target.chat.toString())) {
 				this._stateManager.dispatchServerAction(target.chat.toString(), { type: ActionType.ChatIsArchivedChanged, isArchived: true });
 			} else {
-				this._providerService.getProviderForChat(session, target.chat)?.clearCanvasContinuity?.(session, target.chat);
+				const chatSummary = summary?.chats?.find(chat => chat.resource === target.chat.toString());
+				const chatProvider = chatSummary?.provider
+					? this._providerService.getProvider(chatSummary.provider)
+					: this._providerService.getProviderForChat(session, target.chat);
+				chatProvider?.clearCanvasContinuity?.(session, target.chat);
 				if (this._stateManager.getSessionState(key)) {
 					const status = chats?.find(chat => chat.resource === target.chat.toString())?.status;
 					this._stateManager.dispatchServerAction(key, { type: ActionType.SessionChatUpdated, chat: target.chat.toString(), changes: { status } });
@@ -12271,7 +12285,10 @@ export class AgentService extends Disposable implements IAgentService {
 			this._queuePassiveSessionMetadataSynchronization(sessionUri, { kind: 'chat', key: `chatArchived:${chat}`, chat, field: 'archived', set: action.isArchived });
 			this._setSurfacedChatArchived(session, chat, action.isArchived);
 			if (action.isArchived) {
-				this._providerService.getProviderForChat(sessionUri, chatUri)?.clearCanvasContinuity?.(sessionUri, chatUri);
+				const chatProvider = target.provider
+					? this._providerService.getProvider(target.provider)
+					: this._providerService.getProviderForChat(sessionUri, chatUri);
+				chatProvider?.clearCanvasContinuity?.(sessionUri, chatUri);
 				this._queuePassiveSessionMetadataSynchronization(sessionUri, { kind: 'detachFolders', key: `chatFolders:${chat}`, chat });
 			}
 		}
@@ -15192,6 +15209,13 @@ export class AgentService extends Disposable implements IAgentService {
 					this._stateManager.dispatchServerAction(chat, type === ActionType.ChatIsArchivedChanged ? { type, isArchived: value } : { type, isRead: value });
 				} else {
 					// A restored chat not opened yet has only its summary.
+					if (type === ActionType.ChatIsArchivedChanged && value) {
+						const chatResource = URI.parse(chat);
+						const chatProvider = summary.provider
+							? this._providerService.getProvider(summary.provider)
+							: this._providerService.getProviderForChat(imported.session, chatResource);
+						chatProvider?.clearCanvasContinuity?.(imported.session, chatResource);
+					}
 					this._stateManager.dispatchServerAction(sessionKey, { type: ActionType.SessionChatUpdated, chat, changes: { status: withSessionStatusFlag(current, flag, value) } });
 				}
 			}

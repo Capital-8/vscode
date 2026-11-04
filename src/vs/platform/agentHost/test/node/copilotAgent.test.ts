@@ -115,7 +115,7 @@ import { ICopilotChatDiscoveryScan } from '../../node/copilot/copilotChatDiscove
 import { COPILOT_DEFERRED_SDK_EXECUTION_METADATA_KEY, deferCopilotSdkExecution } from '../../node/copilot/copilotSessionExecutionMarker.js';
 import { CopilotGitHubSessionCredentials } from '../../node/copilot/copilotGitHubCredentials.js';
 import type { IAgentHostScopedCredential } from '../../common/agentHostCredentials.js';
-import { AhpErrorCodes, AHP_SESSION_NOT_FOUND, AuthenticateTargetKind, ProtocolError } from '../../common/state/sessionProtocol.js';
+import { AhpErrorCodes, AuthenticateTargetKind, ProtocolError } from '../../common/state/sessionProtocol.js';
 import { GITHUB_MCP_SERVER_NAME } from '../../node/shared/githubMcpServer.js';
 import { AGENT_HOST_FILE_LINK_INSTRUCTIONS } from '../../node/shared/fileLinkInstructions.js';
 import { AGENT_HOST_WORKSPACELESS_INSTRUCTIONS } from '../../node/shared/workspacelessInstructions.js';
@@ -8232,16 +8232,19 @@ suite('CopilotAgent', () => {
 				canvasId: 'preview',
 				extensionId: 'project:preview',
 				title: 'Preview',
+				input: {},
 				url: 'https://example.test/initial',
 			};
 			const restoredCanvas = { ...initialCanvas, url: 'https://example.test/restored' };
 			const resumedRuntimes: MockCopilotSession[] = [];
+			const resumeOpenCanvases: CopilotSession['openCanvases'][] = [];
 			const { agent, launches } = setup(undefined, [], [], { [AgentHostCanvasesEnabledConfigKey]: true }, {
 				onClientCreated: client => {
-					client.resumeSession = async sessionId => {
+					client.resumeSession = async (sessionId, config) => {
 						const runtime = new MockCopilotSession(sessionId);
 						Object.assign(runtime.rpc, { sendMessages: async () => { runtime.sendCalls++; return {}; } });
-						runtime.openCanvases.push(restoredCanvas);
+						resumeOpenCanvases.push(config.openCanvases ?? []);
+						runtime.openCanvases.push(...(config.openCanvases ?? []).map(canvas => ({ ...canvas, url: restoredCanvas.url })));
 						resumedRuntimes.push(runtime);
 						return runtime as unknown as CopilotSession;
 					};
@@ -8288,6 +8291,7 @@ suite('CopilotAgent', () => {
 				assert.deepStrictEqual({
 					launches: launches.map(launch => ({ kind: launch.kind, sends: launch.runtime.sendCalls })),
 					resumes: resumedRuntimes.map(runtime => runtime.sendCalls),
+					resumeOpenCanvases,
 					resources: [...new Set(canvasStates.map(signal => signal.resource.toString()))],
 					sources: {
 						first: urls[0],
@@ -8298,6 +8302,13 @@ suite('CopilotAgent', () => {
 				}, {
 					launches: [{ kind: 'create', sends: 1 }],
 					resumes: [0],
+					resumeOpenCanvases: [[{
+						instanceId: initialCanvas.instanceId,
+						canvasId: initialCanvas.canvasId,
+						extensionId: initialCanvas.extensionId,
+						title: initialCanvas.title,
+						input: initialCanvas.input,
+					}]],
 					resources: [initialResource.toString()],
 					sources: {
 						first: initialCanvas.url,
@@ -27183,7 +27194,7 @@ suite('CopilotAgent', () => {
 					await disposeAgent(agent);
 				}
 			});
-			const run = async (id: string, error: Error) => {
+			const run = async (id: string, error?: Error) => {
 				const agent = createTestAgent(disposables);
 				agents.push(agent);
 				const session = AgentSession.uri('copilotcli', `canvas-restore-${id}`);
@@ -27208,10 +27219,14 @@ suite('CopilotAgent', () => {
 					reason: () => 'idle',
 					canContinue: () => true,
 				});
-				const resume = stub(agent as unknown as {
+				const resume = error ? stub(agent as unknown as {
 					_resolveSessionCanvasChat(session: URI, chat: URI, context: IAgentChatContext, operation: string): Promise<CopilotAgentSession>;
-				}, '_resolveSessionCanvasChat').rejects(error);
-				disposables.add(toDisposable(() => resume.restore()));
+				}, '_resolveSessionCanvasChat').rejects(error) : undefined;
+				if (resume) {
+					disposables.add(toDisposable(() => resume.restore()));
+				} else {
+					chatBackings(agent).delete(chat.toString());
+				}
 				signals.length = 0;
 
 				const watch = agent.watchChatCanvases(chat, {
@@ -27232,12 +27247,12 @@ suite('CopilotAgent', () => {
 					membership: signals.flatMap(signal => signal.kind === 'action' && signal.action.type === ActionType.ChatCanvasesChanged
 						? [signal.action.canvases?.map(canvas => canvas.resource) ?? []]
 						: []),
-					resumes: resume.callCount,
+					resumes: resume?.callCount ?? 0,
 				};
 			};
 
 			const transient = await run('transient', new Error('connection interrupted'));
-			const terminal = await run('terminal', new ProtocolError(AHP_SESSION_NOT_FOUND, 'Session not found'));
+			const terminal = await run('terminal');
 
 			assert.deepStrictEqual({ transient, terminal }, {
 				transient: {
@@ -27248,7 +27263,7 @@ suite('CopilotAgent', () => {
 				terminal: {
 					retained: false,
 					membership: [[URI.parse('ahp-canvas:/terminal').toString()], []],
-					resumes: 1,
+					resumes: 0,
 				},
 			});
 		});

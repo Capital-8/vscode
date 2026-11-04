@@ -1962,6 +1962,7 @@ suite('CopilotSessionLauncher shared session config', () => {
 		let byokResolutions = 0;
 		launcher.resolveByokSessionConfig = async () => { byokResolutions++; return { providers: [], models: [] }; };
 		const pluginDirectory = URI.joinPath(testWorkingDirectory, 'scoped-plugin');
+		const retainedPluginDirectory = URI.joinPath(testWorkingDirectory, 'retained-canvas-plugin');
 		const basePlan = {
 			client, sessionId: 'scoped-session', workingDirectory: testWorkingDirectory, resolvedAgentName: undefined,
 			snapshot: {
@@ -1978,7 +1979,7 @@ suite('CopilotSessionLauncher shared session config', () => {
 		};
 		for (const plan of [
 			{ ...basePlan, kind: 'create' as const, model: undefined },
-			{ ...basePlan, kind: 'resume' as const, fallback: { model: undefined } },
+			{ ...basePlan, kind: 'resume' as const, retainedPluginDirectories: [pluginDirectory, retainedPluginDirectory], fallback: { model: undefined } },
 		]) {
 			const wrapper = await launcher.launch(plan, testRuntime);
 			wrapper.dispose();
@@ -2000,7 +2001,7 @@ suite('CopilotSessionLauncher shared session config', () => {
 			tools: config.availableTools, excludedTools: config.excludedTools,
 			providers: config.providers, models: config.models, managedSettings: config.managedSettings,
 			pluginDirectories: config.pluginDirectories,
-		})), [0, 1].map(() => ({
+		})), [{
 			token: 'scoped', discovery: true, skills: true, connectors: true,
 			fileHooks: true,
 			skipCustomInstructions: undefined, onDemandInstructions: undefined, hostGit: undefined, sessionTelemetry: undefined,
@@ -2011,7 +2012,18 @@ suite('CopilotSessionLauncher shared session config', () => {
 			excludedTools: [...defaultDisabledTools, `builtin:${SEMANTIC_SEARCH_TOOL_NAME}`],
 			providers: [], models: [], managedSettings: { permissions },
 			pluginDirectories: [pluginDirectory.fsPath],
-		})));
+		}, {
+			token: 'scoped', discovery: true, skills: true, connectors: true,
+			fileHooks: true,
+			skipCustomInstructions: undefined, onDemandInstructions: undefined, hostGit: undefined, sessionTelemetry: undefined,
+			coauthor: undefined, builtinSkills: undefined, localAgents: undefined,
+			environment: undefined,
+			sessionStore: true, oauthStorage: 'in-memory',
+			tools: [...COPILOT_DEFAULT_AVAILABLE_TOOLS],
+			excludedTools: [...defaultDisabledTools, `builtin:${SEMANTIC_SEARCH_TOOL_NAME}`],
+			providers: [], models: [], managedSettings: { permissions },
+			pluginDirectories: [pluginDirectory.fsPath, retainedPluginDirectory.fsPath],
+		}]);
 		assert.strictEqual(byokResolutions, 2);
 	});
 
