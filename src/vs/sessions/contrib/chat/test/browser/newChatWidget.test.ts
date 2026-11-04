@@ -422,7 +422,7 @@ interface IRestoreNoWorkspaceDraftHarness {
 		openQuickChat(options?: ICreateNewSessionOptions, preserveNavigation?: boolean): IActiveSession | undefined;
 	};
 	readonly sessionsManagementService: { isQuickChatTargetAvailable(): boolean };
-	selectNoWorkspace(options?: ICreateNewSessionOptions): void;
+	selectNoWorkspace(options?: ICreateNewSessionOptions, selectionOptions?: ISelectNoWorkspaceOptions): void;
 }
 
 interface IHandleWorkspaceSelectionHarness {
@@ -1893,6 +1893,7 @@ suite('NewChatWidget', () => {
 			const activeSession = observableValue<IActiveSession | undefined>('activeSession', undefined);
 			const initialRestoreComplete = observableValue('initialRestoreComplete', true);
 			const opened: string[] = [];
+			const noWorkspaceSelections: (ISelectNoWorkspaceOptions | undefined)[] = [];
 			let quickChatAvailable = true;
 			let noWorkspaceSelected = false;
 			let selectedFolderUri: URI | undefined;
@@ -1922,10 +1923,13 @@ suite('NewChatWidget', () => {
 					openQuickChat: (_options, preserveNavigation) => open(preserveNavigation ? 'automatic' : 'explicit'),
 				},
 				sessionsManagementService: { isQuickChatTargetAvailable: () => quickChatAvailable },
-				selectNoWorkspace: () => { open('checked'); },
+				selectNoWorkspace: (_options, selectionOptions) => {
+					noWorkspaceSelections.push(selectionOptions);
+					open('checked');
+				},
 			};
 			return {
-				harness, activeSession, initialRestoreComplete, opened,
+				harness, activeSession, initialRestoreComplete, opened, noWorkspaceSelections,
 				set quickChatAvailable(value: boolean) { quickChatAvailable = value; },
 				set noWorkspaceSelected(value: boolean) { noWorkspaceSelected = value; },
 				set selectedFolderUri(value: URI | undefined) { selectedFolderUri = value; },
@@ -1950,6 +1954,17 @@ suite('NewChatWidget', () => {
 			state.noWorkspaceSelected = true;
 			await state.restore();
 			assert.deepStrictEqual(state.opened, ['checked']);
+		});
+
+		test('restores a previous Chat selection without reporting a user choice or navigation', async () => {
+			// Either would cancel the workspace of a window-open handoff that is still resolving.
+			const state = createRestoreHarness();
+			state.noWorkspaceSelected = true;
+			await state.restore();
+			assert.deepStrictEqual({ opened: state.opened, selections: state.noWorkspaceSelections }, {
+				opened: ['checked'],
+				selections: [{ userSelection: false, preserveNavigation: true }],
+			});
 		});
 
 		test('cancels pending discovery on workspace clear and ignores subsequent automatic restores', async () => {
