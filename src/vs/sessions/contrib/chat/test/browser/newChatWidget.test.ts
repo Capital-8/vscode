@@ -4002,7 +4002,7 @@ suite('NewChatWidget', () => {
 				selectNoWorkspace: (_options: ICreateNewSessionOptions | undefined, selectionOptions?: ISelectNoWorkspaceOptions) => {
 					noWorkspaceSelections.push(selectionOptions);
 					selection = { ...selection, folderUri: undefined, state: 'noWorkspace' };
-					return undefined;
+					return upcastPartial<IActiveSession>({ sessionId: 'quick-chat' });
 				},
 			});
 			const preserved = [
@@ -4015,6 +4015,15 @@ suite('NewChatWidget', () => {
 			});
 		});
 	}
+
+	test('the target composer is not ready without a workspace until a quick chat opens', () => {
+		// The environment may not have a compatible quick-chat target yet, leaving the previous draft as the session.
+		const widget: NewChatWidget = Object.assign(Object.create(NewChatWidget.prototype), {
+			_workspacePicker: { selectionSnapshot: { state: 'noWorkspace', origin: WorkspaceSelectionOrigin.None, historyState: 'loaded', sessionFallbackState: 'idle', registeredProviderCount: 1 } },
+			selectNoWorkspace: () => undefined,
+		});
+		assert.strictEqual(widget.applyNoWorkspace({ userSelection: false }), 'notReady');
+	});
 
 	for (const protectedState of ['input', 'attachments', 'restoredDraft', 'noWorkspace', 'quickChat'] as const) {
 		test(`an inferred workspace preserves the target composer's ${protectedState}`, () => {
