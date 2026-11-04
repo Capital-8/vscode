@@ -65,8 +65,14 @@ export class SessionFlagsContribution extends Disposable implements IAgentHostCh
 			} else if (dispatched.action.type === ActionType.SessionIsArchivedChanged) {
 				if (dispatched.action.isArchived) {
 					const session = URI.parse(dispatched.session);
+					const sessionProvider = this._providerService.getProviderForSession(session);
+					sessionProvider?.clearCanvasContinuity?.(session);
 					for (const chat of this._stateManager.getSessionState(dispatched.session)?.chats ?? []) {
-						this._providerService.getProviderForChat(session, URI.parse(chat.resource))?.clearCanvasContinuity?.(session, URI.parse(chat.resource));
+						const chatResource = URI.parse(chat.resource);
+						const chatProvider = this._providerService.getProviderForChat(session, chatResource);
+						if (chatProvider !== sessionProvider) {
+							chatProvider?.clearCanvasContinuity?.(session, chatResource);
+						}
 					}
 				}
 				// One write: an unarchive clears the automatic archive time together with the flag.

@@ -115,7 +115,7 @@ import { ICopilotChatDiscoveryScan } from '../../node/copilot/copilotChatDiscove
 import { COPILOT_DEFERRED_SDK_EXECUTION_METADATA_KEY, deferCopilotSdkExecution } from '../../node/copilot/copilotSessionExecutionMarker.js';
 import { CopilotGitHubSessionCredentials } from '../../node/copilot/copilotGitHubCredentials.js';
 import type { IAgentHostScopedCredential } from '../../common/agentHostCredentials.js';
-import { AhpErrorCodes, AuthenticateTargetKind, ProtocolError } from '../../common/state/sessionProtocol.js';
+import { AhpErrorCodes, AHP_SESSION_NOT_FOUND, AuthenticateTargetKind, ProtocolError } from '../../common/state/sessionProtocol.js';
 import { GITHUB_MCP_SERVER_NAME } from '../../node/shared/githubMcpServer.js';
 import { AGENT_HOST_FILE_LINK_INSTRUCTIONS } from '../../node/shared/fileLinkInstructions.js';
 import { AGENT_HOST_WORKSPACELESS_INSTRUCTIONS } from '../../node/shared/workspacelessInstructions.js';
@@ -27173,6 +27173,83 @@ suite('CopilotAgent', () => {
 			}, {
 				resumes: 0,
 				live: false,
+			});
+		});
+
+		test('keeps transient canvas restore failures retryable but clears terminally missing backing', async () => {
+			const agents: CopilotAgent[] = [];
+			afterTest(async () => {
+				for (const agent of agents) {
+					await disposeAgent(agent);
+				}
+			});
+			const run = async (id: string, error: Error) => {
+				const agent = createTestAgent(disposables);
+				agents.push(agent);
+				const session = AgentSession.uri('copilotcli', `canvas-restore-${id}`);
+				const chat = URI.parse(buildChatUri(session, 'peer-canvas'));
+				const resource = URI.parse(`ahp-canvas:/${id}`);
+				setPeerChatStub(agent, chat, {
+					hasActiveTurn: false,
+					hasRunningDetachedShells: async () => false,
+					takeCanvasProjection: () => ({
+						projections: [{
+							resource,
+							canvas: { instanceId: 'preview', extensionId: 'project:preview', canvasId: 'preview' },
+						}],
+						pendingCloseInstanceIds: new Set<string>(),
+					}),
+					destroySession: async () => { },
+					dispose: () => { },
+				}, `sdk-canvas-restore-${id}`);
+				const signals: AgentSignal[] = [];
+				disposables.add(agent.onDidChatProgress(signal => signals.push(signal)));
+				await agent.chats.releaseChat(chat, exactChatContext(session, chat), {
+					reason: () => 'idle',
+					canContinue: () => true,
+				});
+				const resume = stub(agent as unknown as {
+					_resolveSessionCanvasChat(session: URI, chat: URI, context: IAgentChatContext, operation: string): Promise<CopilotAgentSession>;
+				}, '_resolveSessionCanvasChat').rejects(error);
+				disposables.add(toDisposable(() => resume.restore()));
+				signals.length = 0;
+
+				const watch = agent.watchChatCanvases(chat, {
+					published: () => [],
+					resolveContext: async () => exactChatContext(session, chat),
+				});
+				const restoration = (agent as unknown as {
+					_canvasRestores: { get(chat: URI): Promise<void> | undefined };
+				})._canvasRestores.get(chat);
+				assert.ok(restoration);
+				await restoration;
+				watch.dispose();
+
+				return {
+					retained: (agent as unknown as {
+						_releasedCanvasContinuities: { has(key: string): boolean };
+					})._releasedCanvasContinuities.has(chat.toString()),
+					membership: signals.flatMap(signal => signal.kind === 'action' && signal.action.type === ActionType.ChatCanvasesChanged
+						? [signal.action.canvases?.map(canvas => canvas.resource) ?? []]
+						: []),
+					resumes: resume.callCount,
+				};
+			};
+
+			const transient = await run('transient', new Error('connection interrupted'));
+			const terminal = await run('terminal', new ProtocolError(AHP_SESSION_NOT_FOUND, 'Session not found'));
+
+			assert.deepStrictEqual({ transient, terminal }, {
+				transient: {
+					retained: true,
+					membership: [[URI.parse('ahp-canvas:/transient').toString()]],
+					resumes: 1,
+				},
+				terminal: {
+					retained: false,
+					membership: [[URI.parse('ahp-canvas:/terminal').toString()], []],
+					resumes: 1,
+				},
 			});
 		});
 

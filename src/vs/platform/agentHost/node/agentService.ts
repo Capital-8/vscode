@@ -2383,6 +2383,7 @@ export class AgentService extends Disposable implements IAgentService {
 					this._savedChatArchivePublications.delete(action);
 				}
 			} else {
+				this._providerService.getProviderForSession(session)?.clearCanvasContinuity?.(session);
 				this._stateManager.setSurfacedSessionStatusFlag(key, SessionStatus.IsArchived, true);
 				this._clearAgentMergeIndex(session);
 			}
@@ -2392,11 +2393,14 @@ export class AgentService extends Disposable implements IAgentService {
 			const chats = summary?.chats?.map(chat => chat.resource === target.chat.toString() ? { ...chat, status: withSessionStatusFlag(chat.status ?? SessionStatus.Idle, SessionStatus.IsArchived, true) } : chat);
 			if (this._stateManager.getChatState(target.chat.toString())) {
 				this._stateManager.dispatchServerAction(target.chat.toString(), { type: ActionType.ChatIsArchivedChanged, isArchived: true });
-			} else if (this._stateManager.getSessionState(key)) {
-				const status = chats?.find(chat => chat.resource === target.chat.toString())?.status;
-				this._stateManager.dispatchServerAction(key, { type: ActionType.SessionChatUpdated, chat: target.chat.toString(), changes: { status } });
-			} else if (summary) {
-				this._setSurfacedChatArchived(key, target.chat.toString(), true);
+			} else {
+				this._providerService.getProviderForChat(session, target.chat)?.clearCanvasContinuity?.(session, target.chat);
+				if (this._stateManager.getSessionState(key)) {
+					const status = chats?.find(chat => chat.resource === target.chat.toString())?.status;
+					this._stateManager.dispatchServerAction(key, { type: ActionType.SessionChatUpdated, chat: target.chat.toString(), changes: { status } });
+				} else if (summary) {
+					this._setSurfacedChatArchived(key, target.chat.toString(), true);
+				}
 			}
 			await this._markCatalogPayloadDirty(key);
 			this._catalogReconciliationService.schedule();
@@ -12267,6 +12271,7 @@ export class AgentService extends Disposable implements IAgentService {
 			this._queuePassiveSessionMetadataSynchronization(sessionUri, { kind: 'chat', key: `chatArchived:${chat}`, chat, field: 'archived', set: action.isArchived });
 			this._setSurfacedChatArchived(session, chat, action.isArchived);
 			if (action.isArchived) {
+				this._providerService.getProviderForChat(sessionUri, chatUri)?.clearCanvasContinuity?.(sessionUri, chatUri);
 				this._queuePassiveSessionMetadataSynchronization(sessionUri, { kind: 'detachFolders', key: `chatFolders:${chat}`, chat });
 			}
 		}

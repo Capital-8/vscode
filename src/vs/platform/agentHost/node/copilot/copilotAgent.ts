@@ -8139,6 +8139,9 @@ export class CopilotAgent extends Disposable implements IAgent {
 				});
 			}
 		})().catch(error => {
+			if (error instanceof ProtocolError && error.code === AHP_SESSION_NOT_FOUND) {
+				this._invalidateCanvasContinuity(chat);
+			}
 			this._logService.warn(`[Copilot] Failed to restore released canvases for ${chat.toString()}: ${getErrorMessage(error)}`);
 		}).finally(() => {
 			if (this._canvasRestores.get(chat) === restore) {

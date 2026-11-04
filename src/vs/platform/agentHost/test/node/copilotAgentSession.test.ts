@@ -175,6 +175,7 @@ class MockCopilotSession {
 	readonly canvasOpenCalls: Parameters<CopilotSession['rpc']['canvas']['open']>[0][] = [];
 	readonly canvasCloseCalls: Parameters<CopilotSession['rpc']['canvas']['close']>[0][] = [];
 	canvasCloseGate: Promise<void> | undefined;
+	canvasListOpenGate: Promise<void> | undefined;
 	extensionListGate: Promise<void> | undefined;
 	extensionListError: Error | undefined;
 	canvasListGate: Promise<void> | undefined;
@@ -604,6 +605,7 @@ class MockCopilotSession {
 			},
 			listOpen: async () => {
 				this.onCanvasListOpen?.();
+				await this.canvasListOpenGate;
 				return { openCanvases: this.listedOpenCanvases };
 			},
 			open: async (params: Parameters<CopilotSession['rpc']['canvas']['open']>[0]) => {
@@ -4777,6 +4779,79 @@ suite('CopilotAgentSession', () => {
 				pendingCloses: [preview.instanceId],
 			});
 			session.dispose();
+		});
+
+		test('does not carry an applied close into the next handoff once the instance is reopened', async () => {
+			const { handoff } = await takeCanvasesFromPreviousRuntime({ ...preview, url: 'https://example.test/previous' });
+			const replacement = await createAgentSession(disposables, {
+				resume: true,
+				canvasHandoff: handoff,
+				configureMockSession: mock => {
+					mock.openCanvases.push({ ...preview });
+					mock.listedOpenCanvases.push({ ...preview, url: 'https://example.test/replacement' });
+				},
+			});
+			handoff.pendingCloseInstanceIds?.add(preview.instanceId);
+			assert.strictEqual(replacement.session.adoptCanvasHandoff(handoff), true);
+			await timeout(0);
+			await replacement.session.openCanvas(preview);
+			replacement.mockSession.fire('session.canvas.opened', { ...preview, url: 'https://example.test/reopened' });
+
+			const next = replacement.session.takeCanvasProjection();
+
+			assert.deepStrictEqual({
+				closeCalls: replacement.mockSession.canvasCloseCalls,
+				projections: next?.projections.map(projection => projection.canvas.instanceId),
+				pendingCloses: [...next?.pendingCloseInstanceIds ?? []],
+			}, {
+				closeCalls: [{ instanceId: preview.instanceId }],
+				projections: [preview.instanceId],
+				pendingCloses: [],
+			});
+			replacement.session.dispose();
+		});
+
+		test('waits for an in-flight deferred close before reopening the same instance', async () => {
+			const { handoff } = await takeCanvasesFromPreviousRuntime({ ...preview, url: 'https://example.test/previous' });
+			const listOpenReached = new DeferredPromise<void>();
+			const listOpenGate = new DeferredPromise<void>();
+			const replacement = await createAgentSession(disposables, {
+				resume: true,
+				canvasHandoff: handoff,
+				configureMockSession: mock => {
+					mock.openCanvases.push({ ...preview });
+					mock.listedOpenCanvases.push({ ...preview, url: 'https://example.test/replacement' });
+				},
+			});
+			handoff.pendingCloseInstanceIds?.add(preview.instanceId);
+			replacement.mockSession.onCanvasListOpen = () => listOpenReached.complete();
+			replacement.mockSession.canvasListOpenGate = listOpenGate.p;
+			assert.strictEqual(replacement.session.adoptCanvasHandoff(handoff), true);
+			await listOpenReached.p;
+
+			const opening = replacement.session.openCanvas(preview);
+			await timeout(0);
+			const openCallsWhileClosePending = [...replacement.mockSession.canvasOpenCalls];
+			listOpenGate.complete();
+			await opening;
+			replacement.mockSession.fire('session.canvas.closed', preview);
+			await timeout(0);
+			const next = replacement.session.takeCanvasProjection();
+
+			assert.deepStrictEqual({
+				closeCalls: replacement.mockSession.canvasCloseCalls,
+				openCallsWhileClosePending,
+				openCalls: replacement.mockSession.canvasOpenCalls,
+				projections: next?.projections.map(projection => projection.canvas.instanceId),
+				pendingCloses: [...next?.pendingCloseInstanceIds ?? []],
+			}, {
+				closeCalls: [{ instanceId: preview.instanceId }],
+				openCallsWhileClosePending: [],
+				openCalls: [preview],
+				projections: [preview.instanceId],
+				pendingCloses: [],
+			});
+			replacement.session.dispose();
 		});
 
 		test('applies a close added after handoff reconciliation but before adoption', async () => {
