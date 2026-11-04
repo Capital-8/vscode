@@ -484,8 +484,6 @@ export interface ICopilotCreateSessionLaunchPlan extends ICopilotSessionLaunchBa
 export interface ICopilotResumeSessionLaunchPlan extends ICopilotSessionLaunchBase {
 	readonly kind: 'resume';
 	readonly workingDirectory: URI;
-	/** Source-less open canvas identities retained by the host for runtime rehydration. */
-	readonly openCanvases?: CopilotSession['openCanvases'];
 	/** Plugin roots retained with idle canvas continuity until active-client customizations republish. */
 	readonly retainedPluginDirectories?: readonly URI[];
 	readonly fallback: {
@@ -1656,7 +1654,6 @@ export class CopilotSessionLauncher implements ICopilotSessionLauncher {
 			requestExtensions: canvasRuntimeEnabled,
 			requestCanvasRenderer: canvasRuntimeEnabled,
 			...(canvasRuntimeEnabled ? { extensionSdkPath: plan.extensionSdkPath } : {}),
-			...(plan.kind === 'resume' && plan.openCanvases?.length ? { openCanvases: plan.openCanvases } : {}),
 			onPermissionRequest: (request, invocation) => runtime.handlePermissionRequest(request, invocation),
 			onUserInputRequest: (request, invocation) => runtime.handleUserInputRequest(request, invocation),
 			askUserVariant: 'elicitation',

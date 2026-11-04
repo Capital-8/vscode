@@ -8237,14 +8237,14 @@ suite('CopilotAgent', () => {
 			};
 			const restoredCanvas = { ...initialCanvas, url: 'https://example.test/restored' };
 			const resumedRuntimes: MockCopilotSession[] = [];
-			const resumeOpenCanvases: CopilotSession['openCanvases'][] = [];
+			const resumeCanvasSeeds: (CopilotSession['openCanvases'] | undefined)[] = [];
 			const { agent, launches } = setup(undefined, [], [], { [AgentHostCanvasesEnabledConfigKey]: true }, {
 				onClientCreated: client => {
 					client.resumeSession = async (sessionId, config) => {
 						const runtime = new MockCopilotSession(sessionId);
 						Object.assign(runtime.rpc, { sendMessages: async () => { runtime.sendCalls++; return {}; } });
-						resumeOpenCanvases.push(config.openCanvases ?? []);
-						runtime.openCanvases.push(...(config.openCanvases ?? []).map(canvas => ({ ...canvas, url: restoredCanvas.url })));
+						resumeCanvasSeeds.push(config.openCanvases);
+						runtime.openCanvases.push(restoredCanvas);
 						resumedRuntimes.push(runtime);
 						return runtime as unknown as CopilotSession;
 					};
@@ -8291,7 +8291,7 @@ suite('CopilotAgent', () => {
 				assert.deepStrictEqual({
 					launches: launches.map(launch => ({ kind: launch.kind, sends: launch.runtime.sendCalls })),
 					resumes: resumedRuntimes.map(runtime => runtime.sendCalls),
-					resumeOpenCanvases,
+					resumeCanvasSeeds,
 					resources: [...new Set(canvasStates.map(signal => signal.resource.toString()))],
 					sources: {
 						first: urls[0],
@@ -8302,13 +8302,7 @@ suite('CopilotAgent', () => {
 				}, {
 					launches: [{ kind: 'create', sends: 1 }],
 					resumes: [0],
-					resumeOpenCanvases: [[{
-						instanceId: initialCanvas.instanceId,
-						canvasId: initialCanvas.canvasId,
-						extensionId: initialCanvas.extensionId,
-						title: initialCanvas.title,
-						input: initialCanvas.input,
-					}]],
+					resumeCanvasSeeds: [undefined],
 					resources: [initialResource.toString()],
 					sources: {
 						first: initialCanvas.url,

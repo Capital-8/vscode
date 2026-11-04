@@ -763,7 +763,6 @@ export interface ICopilotAgentSessionOptions {
 interface ICopilotCanvasProjection {
 	readonly resource: URI;
 	readonly canvas: CanvasState;
-	readonly input?: JsonValue;
 }
 
 /** Canvases a configuration refresh carries from a chat's previous runtime to its replacement. */
@@ -1097,7 +1096,6 @@ type CopilotActivitySource = 'intent' | 'command' | 'fusion' | 'localModel';
 /** How long a rejected permission mode waits for managed settings to resolve before its single retry. */
 const managedSettingsPermissionRetryTimeoutMs = 3000;
 const MAX_PROJECTED_CANVASES = 8;
-const CANVAS_REGISTRATION_TIMEOUT_MS = 10_000;
 
 /**
  * Encapsulates a single Copilot SDK session and all its associated bookkeeping.
@@ -5008,10 +5006,9 @@ export class CopilotAgentSession extends Disposable {
 
 	/** Releases this session's canvases and hands them over without sources, so a replacement runtime can keep their channels. */
 	takeCanvasProjection(): ICopilotCanvasHandoff | undefined {
-		const projections = [...this._canvasByInstanceId.values()].map(({ resource, input, canvas: { url: _url, ...canvas } }) => ({
+		const projections = [...this._canvasByInstanceId.values()].map(({ resource, canvas: { url: _url, ...canvas } }) => ({
 			resource,
 			canvas,
-			...(input !== undefined ? { input } : {}),
 		}));
 		const pendingCloseInstanceIds = new Set(this._deferredCanvasCloseInstanceIds);
 		this._releaseCanvasRegistrySnapshot();
@@ -5270,7 +5267,7 @@ export class CopilotAgentSession extends Disposable {
 		this._publishAuthoritativeCanvasRegistry();
 	}
 
-	/** Reopens handed-over canvases the runtime restored and drops the ones it no longer has open. */
+	/** Reconciles handed-over canvases with the instances the resumed runtime restored. */
 	private async _reconcileCanvasHandoff(wrapper: CopilotSessionWrapper): Promise<void> {
 		const handoff = this._pendingCanvasHandoff;
 		const pendingCloseInstanceIds = handoff?.pendingCloseInstanceIds;
@@ -5288,9 +5285,6 @@ export class CopilotAgentSession extends Disposable {
 			return;
 		}
 		const openByInstanceId = new Map(openCanvases.map(canvas => [canvas.instanceId, canvas]));
-		if (handoff) {
-			await this._reopenMissingCanvasHandoff(wrapper, handoff, openByInstanceId);
-		}
 		await this._applyDeferredCanvasCloses(wrapper, openByInstanceId);
 		if (this._store.isDisposed) {
 			return;
@@ -5307,59 +5301,6 @@ export class CopilotAgentSession extends Disposable {
 				this._canvasByInstanceId.delete(projection.canvas.instanceId);
 			}
 		}
-	}
-
-	private async _reopenMissingCanvasHandoff(
-		wrapper: CopilotSessionWrapper,
-		handoff: ICopilotCanvasHandoff,
-		openByInstanceId: Map<string, CopilotSession['openCanvases'][number]>,
-	): Promise<void> {
-		const pendingCloseInstanceIds = handoff.pendingCloseInstanceIds;
-		for (const projection of handoff.projections) {
-			const canvas = projection.canvas;
-			if (pendingCloseInstanceIds?.has(canvas.instanceId) || openByInstanceId.has(canvas.instanceId)) {
-				continue;
-			}
-			if (!await this._waitForCanvasRegistration(wrapper, canvas.extensionId, canvas.canvasId)) {
-				this._logService.warn(`[Copilot:${this.sessionId}] Cannot reopen handed-over canvas '${canvas.canvasId}': its provider did not register`);
-				continue;
-			}
-			try {
-				const opened = await this._awaitControlPlaneRpc('rpc.canvas.open', wrapper.session.rpc.canvas.open({
-					canvasId: canvas.canvasId,
-					extensionId: canvas.extensionId,
-					instanceId: canvas.instanceId,
-					...(projection.input !== undefined ? { input: projection.input } : {}),
-				}));
-				openByInstanceId.set(canvas.instanceId, opened);
-			} catch (error) {
-				this._logService.warn(`[Copilot:${this.sessionId}] Failed to reopen handed-over canvas '${canvas.canvasId}': ${getErrorMessage(error)}`);
-			}
-			if (this._store.isDisposed) {
-				throw new CancellationError();
-			}
-		}
-	}
-
-	private async _waitForCanvasRegistration(wrapper: CopilotSessionWrapper, extensionId: string, canvasId: string): Promise<boolean> {
-		const deadline = Date.now() + CANVAS_REGISTRATION_TIMEOUT_MS;
-		while (!this._store.isDisposed) {
-			const changed = new DeferredPromise<true>();
-			const listener = wrapper.onCanvasRegistryChanged(() => changed.complete(true));
-			try {
-				const registered = await this._awaitControlPlaneRpc('rpc.canvas.list', wrapper.session.rpc.canvas.list());
-				if (registered.canvases.some(canvas => canvas.extensionId === extensionId && canvas.canvasId === canvasId)) {
-					return true;
-				}
-				const remaining = deadline - Date.now();
-				if (remaining <= 0 || await raceTimeout(changed.p, remaining) !== true) {
-					return false;
-				}
-			} finally {
-				listener.dispose();
-			}
-		}
-		throw new CancellationError();
 	}
 
 	private _flushDeferredCanvasCloses(wrapper: CopilotSessionWrapper): Promise<void> {
@@ -5476,7 +5417,6 @@ export class CopilotAgentSession extends Disposable {
 		const projection: ICopilotCanvasProjection = {
 			resource: existing?.resource ?? buildCanvasUri(this._chatChannelUri, generateUuid()),
 			canvas,
-			...(data.input !== undefined ? { input: data.input } : existing?.input !== undefined ? { input: existing.input } : {}),
 		};
 		this._canvasByInstanceId.set(canvas.instanceId, projection);
 		this._publishCanvasState(projection);

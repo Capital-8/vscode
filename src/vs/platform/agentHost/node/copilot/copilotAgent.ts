@@ -7992,24 +7992,6 @@ export class CopilotAgent extends Disposable implements IAgent {
 		return this._claimedReleasedCanvasContinuities.get(chat.toString())?.pluginDirectories;
 	}
 
-	private _canvasHandoffOpenCanvases(chat: URI) {
-		const handoff = this._canvasHandoffForChat(chat);
-		const pendingCloseInstanceIds = handoff?.pendingCloseInstanceIds;
-		const canvases = handoff?.projections.flatMap(projection => {
-			const canvas = projection.canvas;
-			return pendingCloseInstanceIds?.has(canvas.instanceId) ? [] : [{
-				instanceId: canvas.instanceId,
-				extensionId: canvas.extensionId,
-				...(canvas.extensionName !== undefined ? { extensionName: canvas.extensionName } : {}),
-				canvasId: canvas.canvasId,
-				...(canvas.title !== undefined ? { title: canvas.title } : {}),
-				...(canvas.status !== undefined ? { status: canvas.status } : {}),
-				...(projection.input !== undefined ? { input: projection.input } : {}),
-			}];
-		});
-		return canvases?.length ? canvases : undefined;
-	}
-
 	private _settleReleasedCanvasContinuity(continuity: IReleasedCanvasContinuity, replacement: CopilotAgentSession | undefined): void {
 		const chatKey = continuity.chat.toString();
 		if (this._claimedReleasedCanvasContinuities.get(chatKey) !== continuity) {
@@ -9379,7 +9361,6 @@ export class CopilotAgent extends Disposable implements IAgent {
 			}
 			const disabledRootMcpServers = await this._disabledRootMcpServers(ownerSession, snapshot);
 			const shellManager = this._instantiationService.createInstance(ShellManager, ownerSession, chat, context.resource, workingDirectory);
-			const openCanvases = this._canvasHandoffOpenCanvases(chat);
 			const retainedPluginDirectories = this._releasedCanvasPluginDirectories(chat);
 			const launchPlan: CopilotSessionLaunchPlan = {
 				kind: 'resume',
@@ -9397,7 +9378,6 @@ export class CopilotAgent extends Disposable implements IAgent {
 				workspaceless: storedMetadata.workspaceless,
 				stageRecorder,
 				...context.surface,
-				...(openCanvases ? { openCanvases } : {}),
 				...(retainedPluginDirectories?.length ? { retainedPluginDirectories } : {}),
 				fallback: { model: info.model, longContextWindow: this._longContextWindowFor(info.model?.id), freeLongContext: this._isFreeLongContext(info.model?.id) },
 			};
@@ -10279,7 +10259,6 @@ export class CopilotAgent extends Disposable implements IAgent {
 			if (storedMetadata.agent && !resolvedAgentName) {
 				this._logService.info(`[Copilot:${sessionId}] Stored custom agent is not available in the current plugin snapshot; resuming without a custom agent`);
 			}
-			const openCanvases = this._canvasHandoffOpenCanvases(chatChannelUri);
 			const retainedPluginDirectories = this._releasedCanvasPluginDirectories(chatChannelUri);
 			const launchPlan: CopilotSessionLaunchPlan = {
 				kind: 'resume',
@@ -10297,7 +10276,6 @@ export class CopilotAgent extends Disposable implements IAgent {
 				workspaceless: storedMetadata.workspaceless,
 				stageRecorder,
 				...surface,
-				...(openCanvases ? { openCanvases } : {}),
 				...(retainedPluginDirectories?.length ? { retainedPluginDirectories } : {}),
 				fallback: {
 					model: storedMetadata.model,

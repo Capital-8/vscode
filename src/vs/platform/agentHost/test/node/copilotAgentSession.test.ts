@@ -4687,45 +4687,6 @@ suite('CopilotAgentSession', () => {
 			replacement.session.dispose();
 		});
 
-		test('reopens handed-over canvases when the resumed runtime has not rehydrated them', async () => {
-			const input = { view: 'main' };
-			const { handoff } = await takeCanvasesFromPreviousRuntime({ ...preview, input, url: 'https://example.test/previous' });
-			const restored = { ...preview, input, url: 'https://example.test/restored' };
-			const replacement = await createAgentSession(disposables, {
-				resume: true,
-				canvasHandoff: handoff,
-				configureMockSession: mock => {
-					mock.openCanvases.push({ ...preview });
-					mock.rpc.canvas.open = async request => {
-						mock.canvasOpenCalls.push(request);
-						return restored;
-					};
-				},
-			});
-
-			const adopted = replacement.session.adoptCanvasHandoff(handoff);
-
-			assert.deepStrictEqual({
-				adopted,
-				openCalls: replacement.mockSession.canvasOpenCalls,
-				...summarizeCanvasSignals(replacement.signals),
-			}, {
-				adopted: true,
-				openCalls: [{
-					canvasId: preview.canvasId,
-					extensionId: preview.extensionId,
-					instanceId: preview.instanceId,
-					input,
-				}],
-				states: [
-					{ resource: handoff.projections[0].resource.toString(), url: undefined },
-					{ resource: handoff.projections[0].resource.toString(), url: 'https://example.test/restored' },
-				],
-				membership: [[handoff.projections[0].resource.toString()]],
-			});
-			replacement.session.dispose();
-		});
-
 		test('republishes canvas states before membership after host chat registration', async () => {
 			const { handoff } = await takeCanvasesFromPreviousRuntime({ ...preview, url: 'https://example.test/previous' });
 			const replacement = await createAgentSession(disposables, {
@@ -5058,10 +5019,6 @@ suite('CopilotAgentSession', () => {
 				configureMockSession: mock => {
 					mock.openCanvases.push({ ...preview });
 					mock.listedOpenCanvases.push({ ...preview, url: 'https://example.test/replacement' });
-					mock.rpc.canvas.open = async request => {
-						mock.canvasOpenCalls.push(request);
-						throw new Error('Canvas provider is no longer available');
-					};
 				},
 			});
 			const [previewResource, chartResource] = handoff.projections.map(projection => projection.resource.toString());
@@ -5071,7 +5028,7 @@ suite('CopilotAgentSession', () => {
 			assert.deepStrictEqual({ membershipBeforeAdoption, adopted, openCalls: replacement.mockSession.canvasOpenCalls, ...summarizeCanvasSignals(replacement.signals) }, {
 				membershipBeforeAdoption: [],
 				adopted: true,
-				openCalls: [{ canvasId: chart.canvasId, extensionId: chart.extensionId, instanceId: chart.instanceId }],
+				openCalls: [],
 				states: [
 					{ resource: previewResource, url: undefined },
 					{ resource: chartResource, url: undefined },
