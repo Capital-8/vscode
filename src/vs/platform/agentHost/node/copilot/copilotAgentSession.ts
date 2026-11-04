@@ -3991,6 +3991,10 @@ export class CopilotAgentSession extends Disposable {
 		return this._appliedPluginDirectories;
 	}
 
+	get appliedAgentName(): string | undefined {
+		return this._lastAppliedAgent ?? undefined;
+	}
+
 	/** Whether changing these tools also changes configuration the SDK only accepts at launch. */
 	clientToolsRequireRestart(tools: readonly ToolDefinition[]): boolean {
 		if (!this._clientToolConfiguration) {

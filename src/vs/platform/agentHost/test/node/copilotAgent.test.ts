@@ -8238,12 +8238,16 @@ suite('CopilotAgent', () => {
 			const restoredCanvas = { ...initialCanvas, url: 'https://example.test/restored' };
 			const resumedRuntimes: MockCopilotSession[] = [];
 			const resumeCanvasSeeds: (CopilotSession['openCanvases'] | undefined)[] = [];
+			const resumeAgents: (string | undefined)[] = [];
+			const resumeCustomAgents: string[][] = [];
 			const { agent, launches } = setup(undefined, [], [], { [AgentHostCanvasesEnabledConfigKey]: true }, {
 				onClientCreated: client => {
 					client.resumeSession = async (sessionId, config) => {
 						const runtime = new MockCopilotSession(sessionId);
 						Object.assign(runtime.rpc, { sendMessages: async () => { runtime.sendCalls++; return {}; } });
 						resumeCanvasSeeds.push(config.openCanvases);
+						resumeAgents.push(config.agent);
+						resumeCustomAgents.push(config.customAgents?.map(agent => agent.name) ?? []);
 						runtime.openCanvases.push(restoredCanvas);
 						resumedRuntimes.push(runtime);
 						return runtime as unknown as CopilotSession;
@@ -8272,7 +8276,27 @@ suite('CopilotAgent', () => {
 				});
 				const initialResource = signals.find((signal): signal is Extract<AgentSignal, { kind: 'canvas' }> => signal.kind === 'canvas')?.resource;
 				assert.ok(initialResource);
-				chatEntriesBySdkId(agent).get(launches[0].sessionId)!.chatSession.discardActiveTurn();
+				const liveSession = chatEntriesBySdkId(agent).get(launches[0].sessionId)!.chatSession;
+				liveSession.discardActiveTurn();
+				const agentUri = URI.file('/canvas-repro.agent.md');
+				const fileService = (agent as unknown as { _fileService: IFileService })._fileService;
+				disposables.add(fileService.registerProvider(Schemas.file, disposables.add(new InMemoryFileSystemProvider())));
+				await fileService.writeFile(agentUri, VSBuffer.fromString('Canvas Repro agent'));
+				const retainedAgent = {
+					name: 'Canvas Repro',
+					uri: agentUri,
+					customization: { type: CustomizationType.Agent, id: agentUri.toString(), uri: agentUri.toString(), name: 'Canvas Repro' },
+					sdkName: 'Canvas Repro',
+				} satisfies IParsedAgent & { readonly sdkName: string };
+				const liveSessionInternals = liveSession as unknown as {
+					_lastAppliedAgent: string | null | undefined;
+					_appliedSnapshot: IActiveClientSnapshot;
+				};
+				liveSessionInternals._lastAppliedAgent = retainedAgent.sdkName;
+				liveSessionInternals._appliedSnapshot = { ...liveSession.appliedSnapshot, discoveredAgents: [retainedAgent] };
+				const backing = chatBackings(agent).get(chat.toString());
+				assert.ok(backing);
+				chatBackings(agent).set(chat.toString(), { ...backing, agent: { uri: agentUri.toString() } });
 
 				await agent.chats.releaseChat(chat, context, { reason: () => 'idle', canContinue: () => true });
 				const watch = agent.watchChatCanvases(chat, {
@@ -8292,6 +8316,8 @@ suite('CopilotAgent', () => {
 					launches: launches.map(launch => ({ kind: launch.kind, sends: launch.runtime.sendCalls })),
 					resumes: resumedRuntimes.map(runtime => runtime.sendCalls),
 					resumeCanvasSeeds,
+					resumeAgents,
+					resumeCustomAgents,
 					resources: [...new Set(canvasStates.map(signal => signal.resource.toString()))],
 					sources: {
 						first: urls[0],
@@ -8303,6 +8329,8 @@ suite('CopilotAgent', () => {
 					launches: [{ kind: 'create', sends: 1 }],
 					resumes: [0],
 					resumeCanvasSeeds: [undefined],
+					resumeAgents: ['Canvas Repro'],
+					resumeCustomAgents: [['Canvas Repro', 'vscode-ask']],
 					resources: [initialResource.toString()],
 					sources: {
 						first: initialCanvas.url,

@@ -118,7 +118,7 @@ import { ILocalModelSetupService } from './localModelBridge/localModelSetupServi
 import { readLocalModelRootConfig, selectLocalModelProvider, type ILocalModelProvider } from './localModelBridge/localModelProvider.js';
 import { getLocalModelThinkingLevels, type LocalModelThinkingSupport } from './localModelBridge/localModelThinking.js';
 import { ICopilotSessionContext, projectFromCopilotContext } from './copilotGitProject.js';
-import { findRelocatedAgentName, parsedPluginsEqual, toChildCustomizations } from './copilotPluginConverters.js';
+import { findRelocatedAgentName, getSdkCustomAgentName, parsedPluginsEqual, toChildCustomizations } from './copilotPluginConverters.js';
 import { CopilotGitHubTelemetryForwarder, isHydraFusionTelemetryKind, type ICopilotModelCallCorrelationTelemetry } from './copilotGitHubTelemetryForwarder.js';
 import { COMPACTION_REQUEST_KIND, isCompactionTelemetryKind, type IForwardedCompactionCorrelation } from './compactionTurnCorrelation.js';
 import { CopilotGitHubCredentials, CopilotGitHubSessionCredentials } from './copilotGitHubCredentials.js';
@@ -444,6 +444,7 @@ interface IReleasedCanvasContinuity {
 	readonly generation: number;
 	readonly handoff: ICopilotCanvasHandoff;
 	readonly pluginDirectories: readonly URI[];
+	readonly agent?: ReturnType<typeof getCopilotCustomAgents>[number];
 }
 
 interface IResolvedCopilotChatContext {
@@ -7992,6 +7993,14 @@ export class CopilotAgent extends Disposable implements IAgent {
 		return this._claimedReleasedCanvasContinuities.get(chat.toString())?.pluginDirectories;
 	}
 
+	private _withReleasedCanvasAgent(snapshot: IActiveClientSnapshot, chat: URI): IActiveClientSnapshot {
+		const agent = this._claimedReleasedCanvasContinuities.get(chat.toString())?.agent;
+		if (!agent || snapshot.discoveredAgents.some(candidate => isEqual(candidate.uri, agent.uri))) {
+			return snapshot;
+		}
+		return { ...snapshot, discoveredAgents: [...snapshot.discoveredAgents, agent] };
+	}
+
 	private _settleReleasedCanvasContinuity(continuity: IReleasedCanvasContinuity, replacement: CopilotAgentSession | undefined): void {
 		const chatKey = continuity.chat.toString();
 		if (this._claimedReleasedCanvasContinuities.get(chatKey) !== continuity) {
@@ -9036,6 +9045,10 @@ export class CopilotAgent extends Disposable implements IAgent {
 			const retainCanvases = options?.reason() === 'idle' && generation === this._canvasContinuityGeneration(initial.chatKey);
 			const handoff = retainCanvases ? target.takeCanvasProjection() : undefined;
 			if (handoff) {
+				const agentName = target.appliedAgentName;
+				const agent = agentName
+					? getCopilotCustomAgents(target.appliedSnapshot).find(candidate => (candidate.sdkName ?? getSdkCustomAgentName(candidate.uri)) === agentName)
+					: undefined;
 				this._retainReleasedCanvasContinuity({
 					chat,
 					ownerSession: current.ownerSession,
@@ -9043,6 +9056,7 @@ export class CopilotAgent extends Disposable implements IAgent {
 					generation,
 					handoff,
 					pluginDirectories: target.appliedPluginDirectories,
+					...(agent ? { agent } : {}),
 				});
 			} else if (!retainCanvases) {
 				this._invalidateCanvasContinuity(chat);
@@ -9354,7 +9368,7 @@ export class CopilotAgent extends Disposable implements IAgent {
 			}
 			// The chat's own anchor set, held until its entry holds it so the set is discovered only once.
 			anchor = await this._acquireChatCustomizationAnchor(activeClient, workingDirectory, additionalDirectories, context.workspaceless);
-			const snapshot = await activeClient.snapshot(chatKey, anchor?.object, info.agent?.uri);
+			const snapshot = this._withReleasedCanvasAgent(await activeClient.snapshot(chatKey, anchor?.object, info.agent?.uri), chat);
 			const resolvedAgent = info.agent ? this._resolveAgentSelection(snapshot, info.agent, true) : undefined;
 			if (info.agent && !resolvedAgent) {
 				this._logService.info(`[Copilot] Stored custom agent ${info.agent.uri} is unavailable or ambiguous in the current snapshot; resuming without a custom agent`);
@@ -10250,7 +10264,7 @@ export class CopilotAgent extends Disposable implements IAgent {
 		const anchor = await this._acquireChatCustomizationAnchor(activeClient, customizationDirectory, additionalDirectories, storedMetadata.workspaceless === true);
 		try {
 			// Prefer chat-scoped membership when this SDK session is already bound to a chat.
-			const snapshot = await activeClient.snapshot(this._findBoundSessionChatUri(sessionId)?.toString(), anchor?.object, storedMetadata.agent?.uri);
+			const snapshot = this._withReleasedCanvasAgent(await activeClient.snapshot(this._findBoundSessionChatUri(sessionId)?.toString(), anchor?.object, storedMetadata.agent?.uri), chatChannelUri);
 
 			const disabledRootMcpServers = await this._disabledRootMcpServers(owner.get(), snapshot);
 			const shellManager = this._instantiationService.createInstance(ShellManager, owner.get(), this._findBoundSessionChatUri(sessionId) ?? sessionUri, sessionUri, resolvedWorkingDirectory);
