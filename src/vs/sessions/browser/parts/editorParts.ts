@@ -19,6 +19,7 @@ import { AgentWorkbenchLayout, IAgentWorkbenchLayoutService } from '../workbench
 import { MainEditorPart } from './editorPart.js';
 import { DesktopMainEditorPart } from './desktopEditorPart.js';
 import { createMainWindowInstantiationService } from '../../services/sessions/browser/sessionHost.js';
+import { IDialogService } from '../../../platform/dialogs/common/dialogs.js';
 
 export class EditorParts extends EditorPartsBase {
 
@@ -33,9 +34,10 @@ export class EditorParts extends EditorPartsBase {
 		@IAuxiliaryWindowService auxiliaryWindowService: IAuxiliaryWindowService,
 		@IContextKeyService contextKeyService: IContextKeyService,
 		@ILifecycleService lifecycleService: ILifecycleService,
+		@IDialogService dialogService: IDialogService,
 	) {
 		const mainWindowInstantiationService = createMainWindowInstantiationService(instantiationService);
-		super(mainWindowInstantiationService, storageService, themeService, auxiliaryWindowService, contextKeyService, lifecycleService);
+		super(mainWindowInstantiationService, storageService, themeService, auxiliaryWindowService, contextKeyService, lifecycleService, dialogService);
 		this._register(mainWindowInstantiationService);
 	}
 
