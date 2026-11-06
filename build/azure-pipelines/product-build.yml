@@ -327,6 +327,12 @@ extends:
         enabled: true
         enableExclusions: true
         exclusionsFilePath: $(Build.SourcesDirectory)/.eslint-ignore
+      # Without a timeout, a hung Defender for Linux scan runs until the job
+      # limit. On a timeout, 1ES logs an error and the publish still runs.
+      # mdatp cancels its own stuck scans at 10 minutes and 1ES then retries
+      # them, so the timeout is shorter than that.
+      antimalwareScan:
+        scanTimeoutInMinutes: 8
       sourceAnalysisPool: ${{ variables.VSCODE_WINDOWS_POOL }}
       createAdoIssuesForJustificationsForDisablement: false
     containers:
