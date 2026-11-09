@@ -446,19 +446,26 @@ suite('PromptHoverProvider', () => {
 			assert.strictEqual(hoverEdit, 'Read files');
 		});
 
-		test('hover on unavailable github-copilot tool shows provider availability', async () => {
-			copilotToolInventory = [{ name: 'github/*', description: 'GitHub tools', availability: 'disabled' }];
+		test('hover on spec-defined github-copilot namespaces uses static descriptions', async () => {
+			copilotToolInventory = [
+				{ name: 'github/*', description: 'Provider GitHub tools', availability: 'disabled' },
+				{ name: 'playwright/*', description: 'Provider browser tools', availability: 'unavailable' },
+			];
 			const content = [
 				'---',
 				'description: "Test"',
 				'target: github-copilot',
-				`tools: ['github/*']`,
+				`tools: ['github/*', 'playwright/*']`,
 				'---',
 			].join('\n');
 
-			const hover = await getHover(content, 4, 10, PromptsType.agent);
+			const githubHover = await getHover(content, 4, 10, PromptsType.agent);
+			const playwrightHover = await getHover(content, 4, 23, PromptsType.agent);
 
-			assert.strictEqual(hover, 'GitHub tools\n\nThis tool is recognized but disabled for the matching GitHub Copilot harness.');
+			assert.deepStrictEqual({ githubHover, playwrightHover }, {
+				githubHover: 'Use GitHub tools',
+				playwrightHover: 'Use browser automation tools',
+			});
 		});
 
 		test('hover on github-copilot skill shows description, source, and availability', async () => {
