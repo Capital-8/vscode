@@ -16,7 +16,10 @@ sudo sh -c 'printf "%s\n" "Acquire::Retries \"5\";" "Acquire::http::Timeout \"15
 
 attempts=3
 for ((attempt = 1; attempt <= attempts; attempt++)); do
-  if sudo apt-get update && sudo apt-get install -y "$@"; then
+  # PROOF ONLY: make the first attempt fail through an unreachable proxy.
+  proof=()
+  if ((attempt == 1)); then proof=(-o Acquire::http::Proxy=http://127.0.0.1:9 -o Acquire::https::Proxy=http://127.0.0.1:9 -o Acquire::Retries=0); fi
+  if sudo apt-get "${proof[@]}" update && sudo apt-get "${proof[@]}" install -y "$@"; then
     exit 0
   fi
   if ((attempt < attempts)); then
