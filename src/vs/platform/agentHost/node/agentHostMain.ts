@@ -33,8 +33,9 @@ import { ByokLmBridgeRegistry } from './byokLmBridgeRegistry.js';
 import { IAgentHostProxyResolver } from './agentHostProxyResolver.js';
 import { IAgentSdkDownloader, type IAgentSdkDownloadProgress } from './agentSdkDownloader.js';
 import { IAgentHostProviderService } from './agentHostProviderService.js';
-import { ProtocolServerHandler } from './protocolServerHandler.js';
-import { MissionControlHost } from './missionControl/missionControlHost.js';
+import { ProtocolServerHandler, type IProtocolServerGitHubEnvironment } from './protocolServerHandler.js';
+import { getMissionControlEnvironmentName, MissionControlHost } from './missionControl/missionControlHost.js';
+import { MissionControlClientRegistration } from './missionControl/missionControlClientRegistration.js';
 import { WebSocketProtocolServer } from './webSocketTransport.js';
 import { MessagePortProtocolServer } from './messagePortProtocolServer.js';
 import { cleanupLocalAgentHostEndpointMetadataSync, cleanupLocalAgentHostEndpointSocketSync, createLocalAgentHostEndpointMetadata, prepareLocalAgentHostEndpointMetadataDirectory, prepareLocalAgentHostEndpointSocketDirectory, publishLocalAgentHostEndpointMetadata, type ILocalAgentHostEndpointMetadata } from './localAgentHostMetadata.js';
@@ -62,7 +63,7 @@ import { dirname, join } from '../../../base/common/path.js';
 import { FileAccess } from '../../../base/common/network.js';
 import ErrorTelemetry from '../../telemetry/node/errorTelemetry.js';
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
-import { AgentHostLaunchKindEnvVar, readAgentHostLaunchKind, type AgentHostLaunchKind } from '../common/agentHostTelemetry.js';
+import { AgentHostLaunchKind, AgentHostLaunchKindEnvVar, readAgentHostLaunchKind } from '../common/agentHostTelemetry.js';
 import { markNodeCompileCacheReady } from '../../../base/node/nodeCompileCache.js';
 import { formatAgentHostExit, formatAgentHostStartupFailure, identifyAgentHostExitCaller } from '../common/agentHostProcessExit.js';
 
@@ -393,10 +394,12 @@ async function startAgentHost(): Promise<void> {
 	// Expose dynamic bridge client count to the parent process via a non-protocol
 	// management IPC channel.
 	const connectionCountEmitter = disposables.add(new Emitter<number>());
+	const githubEnvironmentRegisteredEmitter = disposables.add(new Emitter<boolean>());
 	let dynamicSocketInfo: IAgentHostSocketInfo | undefined;
 	const configuredWebSocketServer = new DeferredPromise<void>();
 	const connectionTrackerService: IConnectionTrackerService = {
 		onDidChangeConnectionCount: connectionCountEmitter.event,
+		onDidChangeGitHubEnvironmentRegistered: githubEnvironmentRegisteredEmitter.event,
 		waitForConfiguredWebSocketServer: () => configuredWebSocketServer.p,
 		async startWebSocketServer(): Promise<IAgentHostSocketInfo> {
 			if (protocolIngressDisposables.isDisposed) {
@@ -519,6 +522,19 @@ async function startAgentHost(): Promise<void> {
 		server.registerChannel(AgentHostIpcChannels.ConnectionTracker, ProxyChannel.fromService(connectionTrackerService, disposables));
 	}
 
+	// Remote hosts let a directly connected client share them as a GitHub
+	// environment; the desktop host shares itself through trusted local IPC.
+	let githubEnvironment: IProtocolServerGitHubEnvironment | undefined;
+	if (hostLaunchKind === AgentHostLaunchKind.VSCodeCLI) {
+		const wslDistro = process.env['WSL_DISTRO_NAME'];
+		const registration = protocolIngressDisposables.add(new MissionControlClientRegistration(missionControl.environment, {
+			homeDirectory: os.homedir(),
+			...(wslDistro ? { name: getMissionControlEnvironmentName(productService, `${wslDistro} on ${os.hostname()}`) } : {}),
+		}));
+		protocolIngressDisposables.add(registration.onDidChangeRegistered(registered => githubEnvironmentRegisteredEmitter.fire(registered)));
+		githubEnvironment = registration;
+	}
+
 	// The configured bridge listener remains separate: tunnel forwarding pipes
 	// raw WebSocket streams and cannot carry the local endpoint's bearer token.
 	const configuredWebSocketServerStart = startWebSocketServer(
@@ -533,6 +549,7 @@ async function startAgentHost(): Promise<void> {
 		hostLaunchKind,
 		count => connectionCountEmitter.fire(count),
 		handler => protocolHandlers.push(handler),
+		githubEnvironment,
 	);
 	configuredWebSocketServer.settleWith(configuredWebSocketServerStart);
 	// Startup is complete once the last ingress has settled — successfully or
@@ -629,6 +646,7 @@ async function startWebSocketServer(
 	hostLaunchKind: AgentHostLaunchKind,
 	onConnectionCountChanged: (count: number) => void,
 	onProtocolHandlerCreated: (handler: ProtocolServerHandler) => void,
+	githubEnvironment: IProtocolServerGitHubEnvironment | undefined,
 ): Promise<void> {
 	const port = process.env['VSCODE_AGENT_HOST_PORT'];
 	const socketPath = process.env['VSCODE_AGENT_HOST_SOCKET_PATH'];
@@ -674,6 +692,7 @@ async function startWebSocketServer(
 			completionTriggerCharacters,
 			terminalCommandPrefix: BANG_COMMAND_PREFIX,
 			otlpLogEmitter,
+			...(githubEnvironment ? { githubEnvironment } : {}),
 		},
 		clientFileSystemProvider,
 	));
