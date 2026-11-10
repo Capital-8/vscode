@@ -110,7 +110,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
     "@devcontainers/cli": "0.88.0",
-    "@github/copilot-sdk": "1.0.30-preview.0",
+    "@github/copilot-sdk": "1.0.32-preview.0",
     "@hpke/core": "^1.9.0",
     "@microsoft/1ds-core-js": "^3.2.13",
     "@microsoft/1ds-post-js": "^3.2.13",
@@ -228,7 +228,6 @@
     "eslint": "10.8.0",
     "eslint-formatter-compact": "^8.40.0",
     "eslint-plugin-header": "3.1.1",
-    "eslint-plugin-import": "^2.32.0",
     "eslint-plugin-jsdoc": "^63.3.3",
     "event-stream": "3.3.4",
     "events": "^3.3.0",
@@ -285,5 +284,5 @@
   "optionalDependencies": {
     "windows-foreground-love": "0.6.1"
   },
-  "copilotRuntimeVersion": "1.0.108-0"
+  "copilotRuntimeVersion": "1.0.110-0"
 }

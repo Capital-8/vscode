@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { formatTokenCount } from '../../../../base/common/numbers.js';
 import { localize } from '../../../../nls.js';
 import { getReasoningEffortLabel } from '../../../../platform/agentHost/common/reasoningEffort.js';
 import { IChatAutoModeResolutionPart } from './chatService/chatService.js';
@@ -31,14 +32,19 @@ export function autoModeRoutingTitle(part: IChatAutoModeResolutionPart): string 
 				: part.defaulted
 					? localize('modelRouter.defaulted', "{0} used {1}, its first route", part.router, part.resolved.name)
 					: localize('modelRouter.routed', "{0} picked {1}", part.router, part.resolved.name);
-		return part.effort
+		const withEffort = part.effort
 			? localize('modelRouter.withEffort', "{0} \u00b7 {1} effort", title, getReasoningEffortLabel(part.effort))
 			: title;
+		return part.contextSize
+			? localize({ key: 'modelRouter.withContextSize', comment: ['{0} is a sentence about the model a router picked, {1} is a context window size such as 1M or 200K'] }, "{0} \u00b7 {1}", withEffort, formatTokenCount(part.contextSize))
+			: withEffort;
 	}
 	if (!part.resolved) {
 		return localize('autoMode.routing', "Auto routing task");
 	}
-	return part.resolved.reason ?? localize('autoMode.routedTo', "Auto routed task to {0}", part.resolved.name);
+	return part.resolved.reason ?? (part.fusion
+		? localize('autoMode.fusionRoutedTo', "Copilot Fusion routed task to {0}", part.resolved.name)
+		: localize('autoMode.routedTo', "Auto routed task to {0}", part.resolved.name));
 }
 
 /** Why a host-side router made its pick, for the routing line's hover. Auto explains itself in its title. */
