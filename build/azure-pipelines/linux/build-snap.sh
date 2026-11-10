@@ -36,6 +36,60 @@ sudo apt-get update
 sudo apt-get upgrade -y
 sudo apt-get install -y curl apt-transport-https ca-certificates
 
+# PROOF ONLY, do not merge: route snapcraft's stage-package downloads through a local
+# proxy that never answers the first request for every 10th .deb, so apt has to time
+# the connection out and retry.
+command -v python3 >/dev/null || { echo "PROOF: python3 is missing" >&2; exit 1; }
+cat > /tmp/stall-proxy.py <<'PY'
+import http.server, socketserver, sys, threading, time, urllib.error, urllib.request
+seen = set(); lock = threading.Lock(); count = [0]; stalls = [0]
+class Handler(http.server.BaseHTTPRequestHandler):
+	protocol_version = 'HTTP/1.0'
+	def do_GET(self):
+		url = self.path
+		if url.endswith('.deb'):
+			with lock:
+				first = url not in seen
+				seen.add(url)
+				if first:
+					count[0] += 1
+				stall = first and count[0] % 10 == 1
+				if stall:
+					stalls[0] += 1
+			if stall:
+				sys.stderr.write(f'[stall-proxy] stall #{stalls[0]}: {url}\n'); sys.stderr.flush()
+				time.sleep(600)
+				return
+		try:
+			with urllib.request.urlopen(url, timeout=60) as r:
+				self.send_response(r.status)
+				for k, v in r.getheaders():
+					if k.lower() not in ('connection', 'transfer-encoding'):
+						self.send_header(k, v)
+				self.send_header('Connection', 'close')
+				self.end_headers()
+				while True:
+					b = r.read(65536)
+					if not b:
+						break
+					self.wfile.write(b)
+		except urllib.error.HTTPError as e:
+			self.send_response(e.code); self.send_header('Connection', 'close'); self.end_headers()
+		except Exception:
+			try:
+				self.send_error(502)
+			except Exception:
+				pass
+	def log_message(self, *args):
+		pass
+class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
+	daemon_threads = True
+Server(('127.0.0.1', 3128), Handler).serve_forever()
+PY
+python3 /tmp/stall-proxy.py &
+sleep 2
+sudo sh -c 'echo "Acquire::http::Proxy \"http://127.0.0.1:3128\";" > /etc/apt/apt.conf.d/99-proof-stall-proxy'
+
 # Define variables
 SNAP_ROOT="$(pwd)/.build/linux/snap/$VSCODE_ARCH"
 
