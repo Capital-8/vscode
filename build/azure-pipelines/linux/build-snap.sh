@@ -42,7 +42,7 @@ sudo apt-get install -y curl apt-transport-https ca-certificates
 command -v python3 >/dev/null || { echo "PROOF: python3 is missing" >&2; exit 1; }
 cat > /tmp/stall-proxy.py <<'PY'
 import http.server, socketserver, sys, threading, time, urllib.error, urllib.request
-seen = set(); lock = threading.Lock(); count = [0]; stalls = [0]
+seen = set(); stalled = set(); lock = threading.Lock(); count = [0]; stalls = [0]
 class Handler(http.server.BaseHTTPRequestHandler):
 	protocol_version = 'HTTP/1.0'
 	def do_GET(self):
@@ -56,10 +56,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
 				stall = first and count[0] % 10 == 1
 				if stall:
 					stalls[0] += 1
+				retried = (not first) and url in stalled
+				if stall:
+					stalled.add(url)
 			if stall:
 				sys.stderr.write(f'[stall-proxy] stall #{stalls[0]}: {url}\n'); sys.stderr.flush()
 				time.sleep(600)
 				return
+			if retried:
+				sys.stderr.write(f'[stall-proxy] retry served: {url}\n'); sys.stderr.flush()
 		try:
 			with urllib.request.urlopen(url, timeout=60) as r:
 				self.send_response(r.status)
@@ -89,6 +94,7 @@ PY
 python3 /tmp/stall-proxy.py &
 sleep 2
 sudo sh -c 'echo "Acquire::http::Proxy \"http://127.0.0.1:3128\";" > /etc/apt/apt.conf.d/99-proof-stall-proxy'
+echo "PROOF: host apt Acquire config:"; apt-config dump | grep -i '^Acquire' || true
 
 # Define variables
 SNAP_ROOT="$(pwd)/.build/linux/snap/$VSCODE_ARCH"
@@ -131,4 +137,8 @@ esac
     echo "Snap Store HTTP 429 before any parts ran; retrying initialization in ${delay}s." >&2
     sleep "$delay"
   done
+
+  # PROOF ONLY: show that snapcraft's copied apt configuration carries the timeout.
+  echo "PROOF: apt.conf.d files in snapcraft's stage-package cache:"
+  sudo find / -xdev -path '*/etc/apt/apt.conf.d/80-*' -not -path '/etc/*' -print -exec cat {} \; 2>/dev/null || true
 )
