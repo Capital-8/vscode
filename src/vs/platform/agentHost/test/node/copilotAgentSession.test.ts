@@ -1518,7 +1518,7 @@ async function createAgentSession(disposables: DisposableStore, options?: {
 	restrictedTelemetryEnabled?: boolean;
 	/** Whether the SDK session was created with session telemetry. Defaults to `true`. */
 	sessionTelemetryEnabled?: boolean;
-	launchAccountSelection?: CopilotSessionWrapper['launchAccountSelection'];
+	usesMicrosoftAuthentication?: boolean;
 	onTurnEnded?: () => void;
 	modelId?: string;
 	enableDevelopmentErrorInjection?: boolean;
@@ -1682,7 +1682,7 @@ async function createAgentSession(disposables: DisposableStore, options?: {
 			if (duringLaunch) {
 				await duringLaunch;
 			}
-			return new CopilotSessionWrapper(mockSession as unknown as CopilotSession, options?.canvasRuntimeEnabled ?? true, options?.launchByokConfig ?? {}, imageGenerationEnabled, imageGenerationWatermark, undefined, options?.sessionTelemetryEnabled ?? true, rootValues[AgentHostMcpSkillsEnabledConfigKey] !== false, options?.launchAccountSelection, logService);
+			return new CopilotSessionWrapper(mockSession as unknown as CopilotSession, options?.canvasRuntimeEnabled ?? true, options?.launchByokConfig ?? {}, imageGenerationEnabled, imageGenerationWatermark, undefined, options?.sessionTelemetryEnabled ?? true, rootValues[AgentHostMcpSkillsEnabledConfigKey] !== false, options?.usesMicrosoftAuthentication ?? false, logService);
 		},
 		resolveByokSessionConfig: async () => options?.resolveByokSessionConfig?.() ?? {},
 	};
@@ -3875,12 +3875,9 @@ suite('CopilotAgentSession', () => {
 				const baseline = await managedSettings.resolve({});
 				const calls: object[] = [];
 				managedSettings.resolve = async request => { calls.push(request); return baseline; };
-				const selection: CopilotSessionWrapper['launchAccountSelection'] = service === 'microsoft'
-					? { service: 'm365', selectionId: 'conversation-selection', host: 'https://m365.example', resource: 'https://m365.example', accountName: 'runtime-login', displayName: 'Account' }
-					: undefined;
 				const { session, mockSession, onDidReportModelConfiguration, modelConfigurationReported } = await createAgentSession(disposables, {
 					rootValues: { [CopilotCliConfigKey.M365Enabled]: enabled },
-					launchAccountSelection: selection,
+					usesMicrosoftAuthentication: service === 'microsoft',
 					managedSettings, githubToken: `${service}-token`, workingDirectory: URI.file('/workspace'),
 					trackModelConfigurationUpdates: true,
 					configureMockSession: mock => {
@@ -6451,7 +6448,7 @@ suite('CopilotAgentSession', () => {
 
 	suite('CopilotSessionWrapper', () => {
 		function createWrapper(mockSession: MockCopilotSession, logService: ILogService = new NullLogService()): CopilotSessionWrapper {
-			return disposables.add(new CopilotSessionWrapper(mockSession as unknown as CopilotSession, true, {}, false, false, undefined, true, false, undefined, logService));
+			return disposables.add(new CopilotSessionWrapper(mockSession as unknown as CopilotSession, true, {}, false, false, undefined, true, false, false, logService));
 		}
 
 		function lifecycleMessages(entries: CapturingLogService['infos']): string[] {
