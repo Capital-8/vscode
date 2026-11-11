@@ -26,7 +26,7 @@ import { generateUuid, isUUID } from '../../../../base/common/uuid.js';
 import { parseFrontMatter, parse as parseYaml, type YamlParseError } from '../../../../base/common/yaml.js';
 import { StopWatch } from '../../../../base/common/stopwatch.js';
 import { CopilotForkTiming } from './copilotForkTiming.js';
-import { setCopilotRepositoryPluginEnabled } from './copilotRepositoryPluginSettings.js';
+import { readCopilotRepositoryPluginEnablement, setCopilotRepositoryPluginEnabled } from './copilotRepositoryPluginSettings.js';
 import { readRuntimePluginEnablement, withRuntimePluginEnablement } from '../../common/meta/pluginEnablementMeta.js';
 import { rgDiskPath } from '../../../../base/node/ripgrep.js';
 import { Promises as FsPromises } from '../../../../base/node/pfs.js';
@@ -3150,6 +3150,9 @@ export class CopilotAgent extends Disposable implements IAgent {
 		const installed = plugins.filter(plugin => plugin.installed !== false && plugin.source !== 'builtin');
 		const live = this._findPluginOperationSession(session, chat);
 		const effective = installed.length && live ? await live.listInstalledPlugins() : undefined;
+		const workingDirectory = live?.workingDirectory;
+		const repositoryEnablement = workingDirectory?.scheme === Schemas.file
+			? await readCopilotRepositoryPluginEnablement(this._fileService, workingDirectory) : undefined;
 		return installed.map(plugin => {
 			const matches = effective?.filter(candidate => {
 				if (plugin.id && candidate.id) {
@@ -3174,6 +3177,7 @@ export class CopilotAgent extends Disposable implements IAgent {
 				// A ready chat omits inactive plugins; an unavailable inventory must remain pending.
 				effectiveEnabled: matches.length === 1 ? matches[0].enabled : effective !== undefined && matches.length === 0 && !ambiguous ? false : undefined,
 				managedDesiredEnabled: plugin.managedDesiredEnabled,
+				...(plugin.marketplace && repositoryEnablement ? { repositoryEnabled: repositoryEnablement.get(`${plugin.name}@${plugin.marketplace}`) ?? null } : {}),
 				resource: plugin.rootPath && isAbsolute(plugin.rootPath) ? URI.file(plugin.rootPath) : undefined,
 				contentRevision: this._plugins.runtimePluginContentRevision,
 				version: plugin.version,
@@ -3487,7 +3491,10 @@ export class CopilotAgent extends Disposable implements IAgent {
 		return context;
 	}
 
-	async setPluginEnabled(plugin: string, enabled: boolean, scope: 'global' | 'repository', session?: URI, chat?: URI): Promise<void> {
+	async setPluginEnabled(plugin: string, enabled: boolean | null, scope: 'global' | 'repository', session?: URI, chat?: URI): Promise<void> {
+		if (scope === 'global' && enabled === null) {
+			throw new Error(localize('copilot.pluginGlobalInheritanceUnsupported', "Global plugin enablement must be enabled or disabled."));
+		}
 		if (scope === 'repository' && !this._findPluginOperationSession(session, chat)) {
 			throw new Error(localize('copilot.pluginEnablementChatRequired', "Repository plugin enablement requires an active chat in the target session."));
 		}
@@ -3512,7 +3519,7 @@ export class CopilotAgent extends Disposable implements IAgent {
 				if (!repository) {
 					throw new Error(localize('copilot.pluginEnablementRepositoryRequired', "The working directory is not in a Git repository."));
 				}
-				await setCopilotRepositoryPluginEnabled(this._fileService, repository, `${installed.name}@${installed.marketplace}`, enabled);
+				await setCopilotRepositoryPluginEnabled(this._fileService, workingDirectory, `${installed.name}@${installed.marketplace}`, enabled);
 				return;
 			}
 			if (enabled) {
@@ -3529,6 +3536,14 @@ export class CopilotAgent extends Disposable implements IAgent {
 		await Promise.all(this._allLiveSessions().map(session =>
 			this._queueChat(session.sessionId, session.sessionId, 'reloadPluginEnablement', () => session.reloadPlugins('enablement'))));
 		await this._refreshDiscoveredCustomizations(false);
+		if (scope === 'repository') {
+			const installation = (await this.listPluginInstallations(session, chat)).find(candidate =>
+				candidate.marketplace && `${candidate.name}@${candidate.marketplace}` === plugin);
+			if (!installation || installation.effectiveEnabled === undefined || installation.repositoryEnabled !== enabled
+				|| installation.effectiveEnabled !== (enabled ?? installation.enabled)) {
+				throw new Error(localize('copilot.pluginRepositoryEnablementNotApplied', "The repository setting for plugin '{0}' was saved, but the runtime did not apply it to this chat.", plugin));
+			}
+		}
 	}
 
 	async installPlugin(request: IAgentPluginInstallRequest, session?: URI, chat?: URI): Promise<void> {
@@ -12199,6 +12214,7 @@ class SessionPluginController extends Disposable {
 					plugin: installation.directSourceId ?? `${installation.name}@${installation.marketplace}`,
 					globalEnabled: installation.enabled,
 					effectiveEnabled: installation.effectiveEnabled,
+					repositoryEnabled: installation.repositoryEnabled,
 					repositorySupported: !!installation.marketplace,
 					managedDesiredEnabled: installation.managedDesiredEnabled,
 					contentRevision: contents.contentRevision,
