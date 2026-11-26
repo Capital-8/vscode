@@ -352,6 +352,31 @@ suite('SessionsListFilters', () => {
 		});
 	});
 
+	test('a window where the Inbox scope does not apply leaves the scope that a window where it applies changes meanwhile, and reads it once it applies', () => {
+		const storage = store.add(new InMemoryStorageService());
+		createFilters(storage).setInboxEnvironment({ id: 'ssh:old', label: 'Old' });
+		// A folder window opens, then an empty window changes the scope, then clears it
+		const folderWindow = createFilters(storage);
+		folderWindow.setInboxScopeApplies(false);
+		const emptyWindow = createFilters(storage);
+		emptyWindow.setInboxEnvironment({ id: 'ssh:new', label: 'New' });
+		folderWindow.setScheduledOnly(true);
+		folderWindow.reset();
+		const changed = createFilters(storage).inboxScope;
+		emptyWindow.setInboxEnvironment(undefined);
+		folderWindow.setScheduledOnly(true);
+		const cleared = createFilters(storage).inboxScope;
+		// The empty window chooses again, then the folder window closes its folder
+		emptyWindow.setInboxEnvironment({ id: 'ssh:new', label: 'New' });
+		folderWindow.setInboxScopeApplies(true);
+
+		assert.deepStrictEqual({ changed, cleared, applied: folderWindow.inboxScope }, {
+			changed: { environment: { id: 'ssh:new', label: 'New' } },
+			cleared: {},
+			applied: { environment: { id: 'ssh:new', label: 'New' } },
+		});
+	});
+
 	test('Inbox scope distinguishes exact workspaces and environments without separating harnesses', () => {
 		const filters = createFilters();
 		const sessions = [

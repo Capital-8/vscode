@@ -320,7 +320,7 @@ export class SessionsListFilters extends Disposable implements ISessionsListRese
 	constructor(
 		inboxScopeStorageKey: string | undefined,
 		@IStorageService private readonly storageService: IStorageService,
-		@ILogService logService: ILogService,
+		@ILogService private readonly logService: ILogService,
 		@IConfigurationService configurationService: IConfigurationService,
 		@IUriIdentityService private readonly uriIdentityService: IUriIdentityService,
 	) {
@@ -342,19 +342,24 @@ export class SessionsListFilters extends Disposable implements ISessionsListRese
 			}
 		}
 		this._worktree = storageService.get(SessionsListFilters.WORKTREE_STORAGE_KEY, StorageScope.PROFILE) || undefined;
-		const scope = storageService.get(this.inboxScopeStorageKey, StorageScope.PROFILE);
+		this._inboxScope = this.readInboxScope();
+		this.migrateShowAutomationRuns(configurationService, logService);
+	}
+
+	private readInboxScope(): IInboxScope {
+		const scope = this.storageService.get(this.inboxScopeStorageKey, StorageScope.PROFILE);
 		if (scope !== undefined) {
 			try {
 				const value: unknown = JSON.parse(scope);
 				if (!isInboxScope(value)) {
 					throw new Error('Invalid Inbox scope.');
 				}
-				this._inboxScope = value;
+				return value;
 			} catch (error) {
-				logService.warn('Unable to restore Inbox scope.', error);
+				this.logService.warn('Unable to restore Inbox scope.', error);
 			}
 		}
-		this.migrateShowAutomationRuns(configurationService, logService);
+		return {};
 	}
 
 	/** Moves the retired filter's choice to the setting it duplicated. It is kept for a later retry until the setting lists every run or the user changes it, so a retry never overwrites their choice. */
@@ -451,10 +456,17 @@ export class SessionsListFilters extends Disposable implements ISessionsListRese
 		return resetWorkspace;
 	}
 
-	/** Whether the remembered Inbox scope narrows the list, such as only where the list shows its pickers. */
+	/**
+	 * Whether the remembered Inbox scope narrows the list, such as only where the list shows its pickers. While it does not,
+	 * the list neither reads nor writes the scope, which another window, where it applies, may change meanwhile: it reads the
+	 * scope again once it applies.
+	 */
 	setInboxScopeApplies(applies: boolean): void {
 		if (this._inboxScopeApplies !== applies) {
 			this._inboxScopeApplies = applies;
+			if (applies) {
+				this._inboxScope = this.readInboxScope();
+			}
 			this._onDidChange.fire();
 		}
 	}
@@ -515,11 +527,13 @@ export class SessionsListFilters extends Disposable implements ISessionsListRese
 	}
 
 	private save(): void {
-		// The remembered scope, also while it does not apply, so that saving other filters keeps it for where it does
-		if (this._inboxScope.workspace !== undefined || this._inboxScope.environment !== undefined) {
-			this.storageService.store(this.inboxScopeStorageKey, JSON.stringify(this._inboxScope), StorageScope.PROFILE, StorageTarget.MACHINE);
-		} else {
-			this.storageService.remove(this.inboxScopeStorageKey, StorageScope.PROFILE);
+		// The scope only where it applies: windows where it does not leave it to those where it does
+		if (this._inboxScopeApplies) {
+			if (this._inboxScope.workspace !== undefined || this._inboxScope.environment !== undefined) {
+				this.storageService.store(this.inboxScopeStorageKey, JSON.stringify(this._inboxScope), StorageScope.PROFILE, StorageTarget.MACHINE);
+			} else {
+				this.storageService.remove(this.inboxScopeStorageKey, StorageScope.PROFILE);
+			}
 		}
 		if (this._worktree === undefined) {
 			this.storageService.remove(SessionsListFilters.WORKTREE_STORAGE_KEY, StorageScope.PROFILE);
