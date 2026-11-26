@@ -90,12 +90,18 @@ export class ChatViewSessionsGate extends Disposable implements IWorkbenchContri
 		this._register(AccessibleViewRegistry.register(instantiationService.createInstance(ChatViewSessionsListAccessibilityHelp)));
 
 		const enabled = chatViewSessionsListService.enabled;
+		let wasEnabled = false;
 		this._register(autorun(reader => {
 			if (enabled.read(reader)) {
+				wasEnabled = true;
 				reader.store.add(instantiationService.createInstance(ChatViewSessionsListFeature));
-			} else {
-				// The old list has no Inbox: turning the list back on starts out of it
-				leaveStoredInbox(storageService, CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS, CHAT_VIEW_SESSIONS_GROUPINGS);
+			} else if (wasEnabled) {
+				wasEnabled = false;
+				// The old list has no Inbox: turning the list back on starts out of it. The stored Inbox belongs to the profile, so
+				// only a profile-wide turn-off leaves it, not a window whose workspace turns the list off or starts with it off.
+				if (configurationService.inspect<boolean>(ChatConfiguration.ChatViewSessionsListEnabled).userValue !== true) {
+					leaveStoredInbox(storageService, CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS, CHAT_VIEW_SESSIONS_GROUPINGS);
+				}
 			}
 		}));
 	}

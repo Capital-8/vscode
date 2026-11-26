@@ -11,7 +11,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/
 import { isIMenuItem, MenuId, MenuRegistry } from '../../../../../../platform/actions/common/actions.js';
 import { TestConfigurationService } from '../../../../../../platform/configuration/test/common/testConfigurationService.js';
 import { SESSIONS_LIST_INBOX_ENABLED_SETTING } from '../../../common/sessionConfig.js';
-import { IConfigurationChangeEvent, IConfigurationOverrides, IConfigurationService } from '../../../../../../platform/configuration/common/configuration.js';
+import { IConfigurationChangeEvent, IConfigurationOverrides, IConfigurationService, IConfigurationValue } from '../../../../../../platform/configuration/common/configuration.js';
 import { IContextKeyService } from '../../../../../../platform/contextkey/common/contextkey.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../../../platform/instantiation/common/instantiation.js';
 import { SyncDescriptor } from '../../../../../../platform/instantiation/common/descriptors.js';
@@ -78,6 +78,20 @@ function sessionItemMenuItems(): number {
 /** The pane of the Chat view, as the chat contributions register it: unless they are loaded, a stand-in. */
 class ChatViewPaneStandIn extends ViewPane { }
 
+/** A configuration whose workspace can override a user setting, which it reports as the user's and the workspace's values. */
+class WorkspaceConfigurationService extends TestConfigurationService {
+	readonly workspaceValues = new Map<string, unknown>();
+
+	override getValue<T>(arg1?: string | IConfigurationOverrides, arg2?: IConfigurationOverrides): T | undefined {
+		return typeof arg1 === 'string' && this.workspaceValues.has(arg1) ? this.workspaceValues.get(arg1) as T : super.getValue<T>(arg1, arg2);
+	}
+
+	override inspect<T>(key: string, overrides?: IConfigurationOverrides): IConfigurationValue<T> {
+		const userValue = super.getValue<T>(key, overrides);
+		return { ...super.inspect<T>(key, overrides), value: this.getValue<T>(key), userValue, userLocalValue: userValue, workspaceValue: this.workspaceValues.get(key) as T | undefined };
+	}
+}
+
 suite('ChatViewSessionsGate', () => {
 
 	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
@@ -121,7 +135,7 @@ suite('ChatViewSessionsGate', () => {
 	let contextKeyService: MockContextKeyService;
 	let viewVisibility: Emitter<{ id: string; visible: boolean }>;
 
-	let configurationService: TestConfigurationService;
+	let configurationService: WorkspaceConfigurationService;
 
 	function createGate(enabled: boolean, remoteAuthority?: string, configuration?: Record<string, unknown>, stub?: (instantiationService: TestInstantiationService) => void): ChatViewSessionsGate {
 		providers = 0;
@@ -131,7 +145,7 @@ suite('ChatViewSessionsGate', () => {
 		replaced = observableValue('replaced', false);
 		chatViewHosts = observableValue('chatViewHosts', true);
 		const instantiationService = disposables.add(new TestInstantiationService());
-		configurationService = new TestConfigurationService({ [ChatConfiguration.ChatViewSessionsListEnabled]: enabled, ...configuration });
+		configurationService = new WorkspaceConfigurationService({ [ChatConfiguration.ChatViewSessionsListEnabled]: enabled, ...configuration });
 		instantiationService.stub(IConfigurationService, configurationService);
 		viewVisibility = disposables.add(new Emitter<{ id: string; visible: boolean }>());
 		instantiationService.stub(IViewsService, upcastPartial<IViewsService>({ onDidChangeViewVisibility: viewVisibility.event, isViewVisible: () => false }));
@@ -172,6 +186,12 @@ suite('ChatViewSessionsGate', () => {
 	/** Changes `key` to `value` in the configuration service of the gate created last, as a user would. */
 	function change(key: string, value: boolean): void {
 		configurationService.setUserConfiguration(key, value);
+		configurationService.onDidChangeConfigurationEmitter.fire(upcastPartial<IConfigurationChangeEvent>({ affectsConfiguration: (affected: string) => affected === key, affectedKeys: new Set([key]) }));
+	}
+
+	/** Overrides `key` with `value` in the workspace of the gate created last, leaving the user's value as it is. */
+	function changeInWorkspace(key: string, value: boolean): void {
+		configurationService.workspaceValues.set(key, value);
 		configurationService.onDidChangeConfigurationEmitter.fire(upcastPartial<IConfigurationChangeEvent>({ affectsConfiguration: (affected: string) => affected === key, affectedKeys: new Set([key]) }));
 	}
 
@@ -366,6 +386,30 @@ suite('ChatViewSessionsGate', () => {
 		const off = stored();
 
 		assert.deepStrictEqual({ on, off }, { on: { chat: SessionsGrouping.Inbox, agents: SessionsGrouping.Inbox }, off: { chat: SessionsGrouping.Environment, agents: SessionsGrouping.Inbox } });
+	});
+
+	test('windows of one profile keep the Chat view\'s stored Inbox when one starts with the list off or its workspace turns the list off', () => {
+		const storageService = disposables.add(new TestStorageService());
+		const keys = CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS;
+		const stored = () => storageService.get(keys.grouping, StorageScope.PROFILE);
+		storageService.store(keys.grouping, SessionsGrouping.Inbox, StorageScope.PROFILE, StorageTarget.MACHINE);
+		storageService.store(keys.nonInboxGrouping, SessionsGrouping.Environment, StorageScope.PROFILE, StorageTarget.MACHINE);
+		const shareStorage = (service: TestInstantiationService) => service.stub(IStorageService, storageService);
+		// A window whose workspace has the list on, then another one that starts with it off
+		createGate(true, undefined, undefined, shareStorage);
+		createGate(false, undefined, undefined, shareStorage);
+		const otherWindowStartsOff = stored();
+		// A window with the list on whose workspace turns it off
+		createGate(true, undefined, undefined, shareStorage);
+		changeInWorkspace(ChatConfiguration.ChatViewSessionsListEnabled, false);
+		const workspaceTurnsOff = stored();
+		// Without the workspace override, the user turns it off for the profile
+		configurationService.workspaceValues.clear();
+		change(ChatConfiguration.ChatViewSessionsListEnabled, true);
+		change(ChatConfiguration.ChatViewSessionsListEnabled, false);
+		const userTurnsOff = stored();
+
+		assert.deepStrictEqual({ otherWindowStartsOff, workspaceTurnsOff, userTurnsOff }, { otherWindowStartsOff: SessionsGrouping.Inbox, workspaceTurnsOff: SessionsGrouping.Inbox, userTurnsOff: SessionsGrouping.Environment });
 	});
 
 	test('the Chat view shows only its sessions while a host, such as the chat part, replaces it, but a chat that the host leaves to it', () => {
