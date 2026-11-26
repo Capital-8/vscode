@@ -20,6 +20,7 @@ import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { IWorkbenchEnvironmentService } from '../../../../services/environment/common/environmentService.js';
+import { IUserDataProfileService } from '../../../../services/userDataProfile/common/userDataProfile.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import { AgentSessionsViewerOrientation, AgentSessionsViewerPosition } from '../../../chat/browser/agentSessions/agentSessions.js';
 import { HideAgentSessionsSidebar, ShowAgentSessionsSidebar } from '../../../chat/browser/agentSessions/agentSessionsActions.js';
@@ -75,6 +76,7 @@ export class ChatViewSessionsGate extends Disposable implements IWorkbenchContri
 		@IWorkbenchEnvironmentService environmentService: IWorkbenchEnvironmentService,
 		@IChatViewSessionsListService chatViewSessionsListService: IChatViewSessionsListService,
 		@IStorageService storageService: IStorageService,
+		@IUserDataProfileService userDataProfileService: IUserDataProfileService,
 	) {
 		super();
 
@@ -98,18 +100,17 @@ export class ChatViewSessionsGate extends Disposable implements IWorkbenchContri
 
 		// The old list has no Inbox: turning the list back on starts out of it. The stored Inbox belongs to the profile, so only
 		// the user setting turning off leaves it, whatever this window's workspace overrides; not a workspace turning the list
-		// off, nor a window starting with it off. A window that still shows the list keeps its Inbox until it reopens.
-		const userEnabled = () => configurationService.inspect<boolean>(ChatConfiguration.ChatViewSessionsListEnabled).userValue === true;
-		let wasUserEnabled = userEnabled();
+		// off, nor a window starting with it off. A window that still shows the list keeps its Inbox until it reopens. The user
+		// value compared is that of the profile it was read in: switching to another profile, whose settings load as a change,
+		// only reads the new profile's value.
+		const userEnabled = () => ({ profile: userDataProfileService.currentProfile.id, enabled: configurationService.inspect<boolean>(ChatConfiguration.ChatViewSessionsListEnabled).userValue === true });
+		let previous = userEnabled();
 		this._register(configurationService.onDidChangeConfiguration(e => {
-			if (!e.affectsConfiguration(ChatConfiguration.ChatViewSessionsListEnabled)) {
-				return;
-			}
-			const isUserEnabled = userEnabled();
-			if (wasUserEnabled && !isUserEnabled) {
+			const current = userEnabled();
+			if (current.profile === previous.profile && e.affectsConfiguration(ChatConfiguration.ChatViewSessionsListEnabled) && previous.enabled && !current.enabled) {
 				leaveStoredInbox(storageService, CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS, CHAT_VIEW_SESSIONS_GROUPINGS);
 			}
-			wasUserEnabled = isUserEnabled;
+			previous = current;
 		}));
 	}
 }

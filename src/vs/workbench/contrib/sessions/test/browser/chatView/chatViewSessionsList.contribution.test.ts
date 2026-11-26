@@ -43,6 +43,8 @@ import { IChatSessionsService, localChatSessionType, SessionType } from '../../.
 import { MockChatSessionsService } from '../../../../chat/test/common/mockChatSessionsService.js';
 import { TestContextService, TestStorageService } from '../../../../../test/common/workbenchTestServices.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../../platform/storage/common/storage.js';
+import { IUserDataProfile } from '../../../../../../platform/userDataProfile/common/userDataProfile.js';
+import { IUserDataProfileService } from '../../../../../services/userDataProfile/common/userDataProfile.js';
 import { IAgentHostEnablementService } from '../../../../../../platform/agentHost/common/agentHostEnablementService.js';
 import { IManagedSettingsService, NullManagedSettingsService } from '../../../../../../platform/policy/common/copilotManagedSettings.js';
 import { ChatViewSessionsListService, IChatViewSessionsListService } from '../../../../chat/common/chatViewSessionsListService.js';
@@ -136,6 +138,8 @@ suite('ChatViewSessionsGate', () => {
 	let viewVisibility: Emitter<{ id: string; visible: boolean }>;
 
 	let configurationService: WorkspaceConfigurationService;
+	/** The profile of the window of the gate created last, which a test can switch. */
+	let currentProfile: { id: string };
 
 	function createGate(enabled: boolean, remoteAuthority?: string, configuration?: Record<string, unknown>, stub?: (instantiationService: TestInstantiationService) => void): ChatViewSessionsGate {
 		providers = 0;
@@ -179,6 +183,9 @@ suite('ChatViewSessionsGate', () => {
 		instantiationService.stub(IWorkbenchLayoutService, upcastPartial<IWorkbenchLayoutService>({ onDidChangePartVisibility: Event.None, isVisible: () => false }));
 		instantiationService.stub(ILifecycleService, upcastPartial<ILifecycleService>({ when: () => Promise.resolve() }));
 		instantiationService.stub(IStorageService, disposables.add(new TestStorageService()));
+		currentProfile = { id: 'default' };
+		const profile = currentProfile;
+		instantiationService.stub(IUserDataProfileService, upcastPartial<IUserDataProfileService>({ get currentProfile() { return upcastPartial<IUserDataProfile>(profile); } }));
 		stub?.(instantiationService);
 		return disposables.add(instantiationService.createInstance(ChatViewSessionsGate));
 	}
@@ -228,7 +235,7 @@ suite('ChatViewSessionsGate', () => {
 				return new ChatViewSessionsListAccessibilityHelp(upcastPartial<IViewsService>({}), upcastPartial<ISessionsViewLocator>({}), new TestConfigurationService());
 			}) as IInstantiationService['createInstance'],
 		});
-		disposables.add(new ChatViewSessionsGate(configurationService, instantiationService, environmentService, new ChatViewSessionsListService(configurationService, environmentService), disposables.add(new TestStorageService())));
+		disposables.add(new ChatViewSessionsGate(configurationService, instantiationService, environmentService, new ChatViewSessionsListService(configurationService, environmentService), disposables.add(new TestStorageService()), upcastPartial<IUserDataProfileService>({ currentProfile: upcastPartial<IUserDataProfile>({ id: 'default' }) })));
 
 		assert.deepStrictEqual({ ...registered(), reads: [...new Set(reads)], created }, { ...before, reads: [ChatConfiguration.ChatViewSessionsListEnabled], created: ['ChatViewSessionsListAccessibilityHelp'] });
 	});
@@ -434,6 +441,27 @@ suite('ChatViewSessionsGate', () => {
 		const userTurnsOffWhileWorkspaceKeepsIt = stored();
 
 		assert.deepStrictEqual({ workspaceTurnsOff, userTurnsOffWhileWorkspaceKeepsIt }, { workspaceTurnsOff: SessionsGrouping.Inbox, userTurnsOffWhileWorkspaceKeepsIt: SessionsGrouping.Environment });
+	});
+
+	test('switching to a profile whose user setting has the list off keeps that profile\'s stored Inbox, where a workspace keeps the list on, and the user turning it off there leaves it', () => {
+		const storageService = disposables.add(new TestStorageService());
+		const keys = CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS;
+		const stored = () => storageService.get(keys.grouping, StorageScope.PROFILE);
+		storageService.store(keys.grouping, SessionsGrouping.Inbox, StorageScope.PROFILE, StorageTarget.MACHINE);
+		storageService.store(keys.nonInboxGrouping, SessionsGrouping.Environment, StorageScope.PROFILE, StorageTarget.MACHINE);
+		// Profile A has the user setting on; the workspace keeps the list on in any profile
+		createGate(true, undefined, undefined, service => service.stub(IStorageService, storageService));
+		changeInWorkspace(ChatConfiguration.ChatViewSessionsListEnabled, true);
+		// Switching to profile B, whose user setting is off, loads its settings as a change
+		currentProfile.id = 'b';
+		change(ChatConfiguration.ChatViewSessionsListEnabled, false);
+		const switched = stored();
+		// In profile B, the user turns the setting on, then off
+		change(ChatConfiguration.ChatViewSessionsListEnabled, true);
+		change(ChatConfiguration.ChatViewSessionsListEnabled, false);
+		const userTurnsOff = stored();
+
+		assert.deepStrictEqual({ switched, userTurnsOff }, { switched: SessionsGrouping.Inbox, userTurnsOff: SessionsGrouping.Environment });
 	});
 
 	test('the Chat view shows only its sessions while a host, such as the chat part, replaces it, but a chat that the host leaves to it', () => {
