@@ -490,33 +490,37 @@ suite('Sessions - SessionsViewPane', () => {
 			storageService.store('sessionsViewPane.grouping', shared, StorageScope.PROFILE, StorageTarget.USER);
 			return chat(storageService).grouping;
 		});
+		const seedStorage = disposables.add(new InMemoryStorageService());
+		seedStorage.store('sessionsViewPane.grouping', SessionsGrouping.Environment, StorageScope.PROFILE, StorageTarget.USER);
+		chat(seedStorage);
+		seedStorage.store('sessionsViewPane.grouping', SessionsGrouping.Date, StorageScope.PROFILE, StorageTarget.USER);
+		const reopenedAfterSharedChange = chat(seedStorage).grouping;
 		const storageService = disposables.add(new InMemoryStorageService());
 		const chatView = chat(storageService);
 		chatView.setGrouping(SessionsGrouping.Environment);
 		chatView.toggleInbox();
 		assert.deepStrictEqual({
 			seeded,
+			reopenedAfterSharedChange,
 			machine: storageService.keys(StorageScope.PROFILE, StorageTarget.MACHINE).sort(),
 			user: storageService.keys(StorageScope.PROFILE, StorageTarget.USER),
 		}, {
 			seeded: [SessionsGrouping.Environment, SessionsGrouping.Date, SessionsGrouping.Date],
+			reopenedAfterSharedChange: SessionsGrouping.Environment,
 			machine: ['chatViewSessionsList.grouping', 'chatViewSessionsList.nonInboxGrouping'],
 			user: [],
 		});
 	});
 
-	test('without Chat, Inbox cannot be entered, but losing Chat, such as as the extension host restarts, does not leave it', () => {
+	test('without Chat, the Chat view cannot enter Inbox, while the Agents window takes programmatic requests as before, the same mode too', () => {
 		const configurationService = new TestConfigurationService({ [SESSIONS_LIST_INBOX_ENABLED_SETTING]: true });
 		disposables.add(configurationService.onDidChangeConfigurationEmitter);
-		const host = createGroupingHost(configurationService, undefined, CHAT_VIEW_SESSIONS_GROUPINGS, false, CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS);
-		host.chatEnabled.set(false);
-		assert.throws(() => host.toggleInbox(), /Enable sessions\.list\.inboxEnabled and AI features/);
-		const blocked = host.grouping;
-		host.chatEnabled.set(true);
-		host.toggleInbox();
-		host.chatEnabled.set(false);
-		host.updateInboxAvailability();
-		assert.deepStrictEqual({ blocked, kept: host.grouping }, { blocked: SessionsGrouping.Date, kept: SessionsGrouping.Inbox });
+		const chatView = createGroupingHost(configurationService, undefined, CHAT_VIEW_SESSIONS_GROUPINGS, false, CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS, true, false);
+		assert.throws(() => chatView.toggleInbox(), /Enable sessions\.list\.inboxEnabled and AI features/);
+		const agentsWindow = createGroupingHost(configurationService, undefined, undefined, false, undefined, false, false);
+		agentsWindow.setGrouping(SessionsGrouping.Inbox);
+		agentsWindow.setGrouping(SessionsGrouping.Inbox);
+		assert.deepStrictEqual({ chat: chatView.grouping, agents: agentsWindow.grouping }, { chat: SessionsGrouping.Date, agents: SessionsGrouping.Inbox });
 	});
 
 	for (const enabled of [false, true]) {

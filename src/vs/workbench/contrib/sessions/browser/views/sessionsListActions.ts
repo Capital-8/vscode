@@ -1168,7 +1168,7 @@ function createSessionsListActions(): DisposableStore {
 			});
 		}
 		run(accessor: ServicesAccessor): void {
-			const view = getSessionsViewOffering(accessor, SessionsGrouping.Inbox);
+			const view = getSessionsViewOffering(accessor.get(IViewsService), accessor.get(ISessionsViewLocator), SessionsGrouping.Inbox);
 			if (!view) {
 				return;
 			}

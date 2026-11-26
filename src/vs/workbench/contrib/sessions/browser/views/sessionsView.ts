@@ -97,7 +97,7 @@ export interface ISessionsViewGroupingStorageKeys {
 	readonly target?: StorageTarget;
 	/**
 	 * A key whose grouping the view starts with while it has not stored its own, such as the one it stored before it had its own
-	 * keys. Only a grouping other than Inbox is taken, and the key is only read.
+	 * keys, which the view then stores as its own once. Only a grouping other than Inbox is taken, and the key is only read.
 	 */
 	readonly fallbackGrouping?: string;
 }
@@ -236,12 +236,12 @@ export function getActiveSessionsView(accessor: ServicesAccessor): SessionsView 
  * The Sessions view that offers `grouping`: the view registered with its id, else the one that a host embeds. In an editor window,
  * only the view the Chat view embeds offers Inbox, not the one of the Agents view.
  */
-export function getSessionsViewOffering(accessor: ServicesAccessor, grouping: SessionsGrouping): SessionsView | undefined {
-	const view = accessor.get(IViewsService).getViewWithId<SessionsView>(SessionsViewId);
+export function getSessionsViewOffering(viewsService: IViewsService, locator: ISessionsViewLocator, grouping: SessionsGrouping): SessionsView | undefined {
+	const view = viewsService.getViewWithId<SessionsView>(SessionsViewId);
 	if (view?.offersGrouping(grouping)) {
 		return view;
 	}
-	const embedded = accessor.get(ISessionsViewLocator).getEmbeddedView();
+	const embedded = locator.getEmbeddedView();
 	return embedded?.offersGrouping(grouping) ? embedded : undefined;
 }
 
@@ -1519,10 +1519,13 @@ export class SessionsView extends ViewPane {
 
 	private initializeGrouping(): void {
 		const storageKeys = this.groupingStorageKeys ?? DEFAULT_GROUPING_STORAGE_KEYS;
-		this.currentGrouping = getStoredSessionsGrouping(this.storageService.get(storageKeys.grouping, StorageScope.PROFILE), this.offeredGroupings);
-		if (this.currentGrouping === undefined && this.groupingStorageKeys?.fallbackGrouping) {
+		const stored = this.storageService.get(storageKeys.grouping, StorageScope.PROFILE);
+		this.currentGrouping = getStoredSessionsGrouping(stored, this.offeredGroupings);
+		if (stored === undefined && this.groupingStorageKeys?.fallbackGrouping) {
+			// Seeds the view's own key once, so that a later change to the fallback key does not change the view as it reopens
 			this.currentGrouping = getStoredSessionsGrouping(this.storageService.get(this.groupingStorageKeys.fallbackGrouping, StorageScope.PROFILE),
-				this.offeredGroupings.filter(grouping => grouping !== SessionsGrouping.Inbox));
+				this.offeredGroupings.filter(grouping => grouping !== SessionsGrouping.Inbox)) ?? this.grouping;
+			this.storageService.store(storageKeys.grouping, this.currentGrouping, StorageScope.PROFILE, this.groupingStorageKeys.target ?? StorageTarget.USER);
 		}
 		this.updateInboxAvailability();
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
@@ -1589,9 +1592,9 @@ export class SessionsView extends ViewPane {
 		if (!this.offeredGroupings.includes(grouping)) {
 			return;
 		}
-		// Entering also needs Chat, whose participant comes and goes, such as as the extension host restarts: losing it hides
-		// the Inbox controls until it is back, and leaves Inbox where the view asks to ({@link ISessionsViewOptions.leaveInboxWithoutChat})
-		if (grouping === SessionsGrouping.Inbox && (!this.inboxAvailable || !this.scopedContextKeyService.contextMatchesRules(ChatContextKeys.enabled))) {
+		// Where the view leaves Inbox as Chat goes ({@link ISessionsViewOptions.leaveInboxWithoutChat}), such as as the extension host
+		// restarts, entering it also needs Chat
+		if (grouping === SessionsGrouping.Inbox && (!this.inboxAvailable || (this.leaveInboxWithoutChat && !this.scopedContextKeyService.contextMatchesRules(ChatContextKeys.enabled)))) {
 			throw new Error(localize('inboxUnavailable', "Enable {0} and AI features to use Inbox Mode.", SESSIONS_LIST_INBOX_ENABLED_SETTING));
 		}
 		if (this.currentGrouping === grouping) {
