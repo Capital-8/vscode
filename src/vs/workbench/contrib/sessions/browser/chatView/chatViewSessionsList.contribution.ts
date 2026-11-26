@@ -11,7 +11,7 @@ import { autorun, derived, IObservable, observableFromEvent, observableSignalFro
 import { localize } from '../../../../../nls.js';
 import { ILocalizedString } from '../../../../../platform/action/common/action.js';
 import { MenuId, MenuRegistry } from '../../../../../platform/actions/common/actions.js';
-import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
+import { ConfigurationTarget, IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../../platform/configuration/common/configurationRegistry.js';
 import { ContextKeyExpr, IContextKeyService, RawContextKey } from '../../../../../platform/contextkey/common/contextkey.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -101,13 +101,15 @@ export class ChatViewSessionsGate extends Disposable implements IWorkbenchContri
 		// The old list has no Inbox: turning the list back on starts out of it. The stored Inbox belongs to the profile, so only
 		// the user setting turning off leaves it, whatever this window's workspace overrides; not a workspace turning the list
 		// off, nor a window starting with it off. A window that still shows the list keeps its Inbox until it reopens. The user
-		// value compared is that of the profile it was read in: switching to another profile, whose settings load as a change,
-		// only reads the new profile's value.
+		// value compared is that of the profile it was read in. Switching to another profile moves the value read to it: the new
+		// profile's settings load as a workspace change, which only reads its value, and where they load no change, the value is
+		// already the new profile's.
 		const userEnabled = () => ({ profile: userDataProfileService.currentProfile.id, enabled: configurationService.inspect<boolean>(ChatConfiguration.ChatViewSessionsListEnabled).userValue === true });
 		let previous = userEnabled();
+		this._register(userDataProfileService.onDidChangeCurrentProfile(e => previous = { ...previous, profile: e.profile.id }));
 		this._register(configurationService.onDidChangeConfiguration(e => {
 			const current = userEnabled();
-			if (current.profile === previous.profile && e.affectsConfiguration(ChatConfiguration.ChatViewSessionsListEnabled) && previous.enabled && !current.enabled) {
+			if (e.source === ConfigurationTarget.USER && current.profile === previous.profile && e.affectsConfiguration(ChatConfiguration.ChatViewSessionsListEnabled) && previous.enabled && !current.enabled) {
 				leaveStoredInbox(storageService, CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS, CHAT_VIEW_SESSIONS_GROUPINGS);
 			}
 			previous = current;
