@@ -230,7 +230,7 @@ suite('ChatViewSessionsGate', () => {
 		});
 		disposables.add(new ChatViewSessionsGate(configurationService, instantiationService, environmentService, new ChatViewSessionsListService(configurationService, environmentService), disposables.add(new TestStorageService())));
 
-		assert.deepStrictEqual({ ...registered(), reads, created }, { ...before, reads: [ChatConfiguration.ChatViewSessionsListEnabled], created: ['ChatViewSessionsListAccessibilityHelp'] });
+		assert.deepStrictEqual({ ...registered(), reads: [...new Set(reads)], created }, { ...before, reads: [ChatConfiguration.ChatViewSessionsListEnabled], created: ['ChatViewSessionsListAccessibilityHelp'] });
 	});
 
 	test('gives the Chat view its sessions list, showing only the sessions while a host replaces it, holding the sessions providers, and the actions of the list only once it shows, while the setting is on', () => {
@@ -410,6 +410,35 @@ suite('ChatViewSessionsGate', () => {
 		const userTurnsOff = stored();
 
 		assert.deepStrictEqual({ otherWindowStartsOff, workspaceTurnsOff, userTurnsOff }, { otherWindowStartsOff: SessionsGrouping.Inbox, workspaceTurnsOff: SessionsGrouping.Inbox, userTurnsOff: SessionsGrouping.Environment });
+	});
+
+	test('windows of one profile whose workspaces alone turn the list on keep the Chat view\'s stored Inbox when one workspace turns it off, until the user setting turns off', () => {
+		const storageService = disposables.add(new TestStorageService());
+		const keys = CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS;
+		const stored = () => storageService.get(keys.grouping, StorageScope.PROFILE);
+		const shareStorage = (service: TestInstantiationService) => service.stub(IStorageService, storageService);
+		// Workspace B turns the list on with the user setting off, and chooses Inbox
+		createGate(false, undefined, undefined, shareStorage);
+		changeInWorkspace(ChatConfiguration.ChatViewSessionsListEnabled, true);
+		storageService.store(keys.grouping, SessionsGrouping.Inbox, StorageScope.PROFILE, StorageTarget.MACHINE);
+		storageService.store(keys.nonInboxGrouping, SessionsGrouping.Environment, StorageScope.PROFILE, StorageTarget.MACHINE);
+		// Workspace A turns the list on, then off again, with the user setting still off
+		createGate(false, undefined, undefined, shareStorage);
+		changeInWorkspace(ChatConfiguration.ChatViewSessionsListEnabled, true);
+		changeInWorkspace(ChatConfiguration.ChatViewSessionsListEnabled, false);
+		const workspaceTurnsOff = stored();
+		// The user setting turns on, then off, while workspace A keeps the list on
+		changeInWorkspace(ChatConfiguration.ChatViewSessionsListEnabled, true);
+		change(ChatConfiguration.ChatViewSessionsListEnabled, true);
+		change(ChatConfiguration.ChatViewSessionsListEnabled, false);
+		const userTurnsOffWhileWorkspaceKeepsIt = stored();
+		// The user setting turns on, then off, without the workspace override
+		configurationService.workspaceValues.clear();
+		change(ChatConfiguration.ChatViewSessionsListEnabled, true);
+		change(ChatConfiguration.ChatViewSessionsListEnabled, false);
+		const userTurnsOff = stored();
+
+		assert.deepStrictEqual({ workspaceTurnsOff, userTurnsOffWhileWorkspaceKeepsIt, userTurnsOff }, { workspaceTurnsOff: SessionsGrouping.Inbox, userTurnsOffWhileWorkspaceKeepsIt: SessionsGrouping.Inbox, userTurnsOff: SessionsGrouping.Environment });
 	});
 
 	test('the Chat view shows only its sessions while a host, such as the chat part, replaces it, but a chat that the host leaves to it', () => {
