@@ -183,6 +183,9 @@ variables:
     value: ${{ eq(parameters.VSCODE_PUBLISH, true) }}
   - name: VSCODE_USE_PUBLISHING_POOLS
     value: ${{ and(eq(variables.VSCODE_PUBLISH, true), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))) }}
+  # Builds of branches other than main and release/* wait for approval from another team member
+  - name: VSCODE_REQUIRE_BUILD_APPROVAL
+    value: ${{ not(or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))) }}
   - name: VSCODE_WINDOWS_POOL
     ${{ if eq(variables.VSCODE_USE_PUBLISHING_POOLS, true) }}:
       value: 1es-windows-2022-x64-publishing
@@ -315,8 +318,29 @@ extends:
     settings:
       networkIsolationPolicy: Permissive,CFSClean,CFSClean2,CFSClean3
     stages:
+      - ${{ if eq(variables.VSCODE_REQUIRE_BUILD_APPROVAL, true) }}:
+        - stage: ApproveBuild
+          displayName: Approve Build
+          dependsOn: []
+          jobs:
+            - job: ApproveBuild
+              displayName: Approve Build
+              pool: server
+              timeoutInMinutes: 4380
+              steps:
+                - task: ManualValidation@1
+                  timeoutInMinutes: 4320
+                  inputs:
+                    notifyUsers: $(Build.RequestedForEmail)
+                    approvers: '[Monaco]\Monaco Team'
+                    allowApproversToApproveTheirOwnRuns: false
+                    instructions: Builds of branches other than main and release/* need approval from another team member.
+                    onTimeout: reject
+
       - stage: Quality
-        dependsOn: []
+        dependsOn:
+          - ${{ if eq(variables.VSCODE_REQUIRE_BUILD_APPROVAL, true) }}:
+            - ApproveBuild
         pool:
           name: ${{ variables.VSCODE_UBUNTU_POOL }}
           os: linux
@@ -326,7 +350,9 @@ extends:
       - ${{ if eq(variables['VSCODE_BUILD_STAGE_WINDOWS'], true) }}:
         - stage: Windows
           displayName: Windows X64
-          dependsOn: []
+          dependsOn:
+            - ${{ if eq(variables.VSCODE_REQUIRE_BUILD_APPROVAL, true) }}:
+              - ApproveBuild
           pool:
             name: ${{ variables.VSCODE_WINDOWS_POOL }}
             os: windows
@@ -413,7 +439,9 @@ extends:
       - ${{ if eq(variables['VSCODE_BUILD_STAGE_WINDOWS_ARM64'], true) }}:
         - stage: WindowsARM64
           displayName: Windows ARM64
-          dependsOn: []
+          dependsOn:
+            - ${{ if eq(variables.VSCODE_REQUIRE_BUILD_APPROVAL, true) }}:
+              - ApproveBuild
           pool:
             name: ${{ variables.VSCODE_WINDOWS_POOL }}
             os: windows
@@ -432,7 +460,9 @@ extends:
       - ${{ if eq(variables['VSCODE_BUILD_STAGE_LINUX_X64'], true) }}:
         - stage: LinuxX64
           displayName: Linux X64
-          dependsOn: []
+          dependsOn:
+            - ${{ if eq(variables.VSCODE_REQUIRE_BUILD_APPROVAL, true) }}:
+              - ApproveBuild
           pool:
             name: ${{ variables.VSCODE_UBUNTU_POOL }}
             os: linux
@@ -516,7 +546,9 @@ extends:
       - ${{ if eq(variables['VSCODE_BUILD_STAGE_LINUX_ARM64'], true) }}:
         - stage: LinuxARM64
           displayName: Linux ARM64
-          dependsOn: []
+          dependsOn:
+            - ${{ if eq(variables.VSCODE_REQUIRE_BUILD_APPROVAL, true) }}:
+              - ApproveBuild
           pool:
             name: ${{ variables.VSCODE_UBUNTU_POOL }}
             os: linux
@@ -536,7 +568,9 @@ extends:
       - ${{ if eq(variables['VSCODE_BUILD_STAGE_LINUX_ARMHF'], true) }}:
         - stage: LinuxARMHF
           displayName: Linux ARMHF
-          dependsOn: []
+          dependsOn:
+            - ${{ if eq(variables.VSCODE_REQUIRE_BUILD_APPROVAL, true) }}:
+              - ApproveBuild
           pool:
             name: ${{ variables.VSCODE_UBUNTU_POOL }}
             os: linux
@@ -555,7 +589,9 @@ extends:
 
       - ${{ if eq(variables['VSCODE_BUILD_STAGE_ALPINE'], true) }}:
         - stage: Alpine
-          dependsOn: []
+          dependsOn:
+            - ${{ if eq(variables.VSCODE_REQUIRE_BUILD_APPROVAL, true) }}:
+              - ApproveBuild
           jobs:
             - ${{ if eq(parameters.VSCODE_BUILD_ALPINE, true) }}:
               - template: build/azure-pipelines/alpine/product-build-alpine.yml@self
@@ -581,7 +617,9 @@ extends:
       - ${{ if eq(variables['VSCODE_BUILD_STAGE_MACOS_X64'], true) }}:
         - stage: macOSX64
           displayName: macOS X64
-          dependsOn: []
+          dependsOn:
+            - ${{ if eq(variables.VSCODE_REQUIRE_BUILD_APPROVAL, true) }}:
+              - ApproveBuild
           pool:
             name: AcesShared
             os: macOS
@@ -603,7 +641,9 @@ extends:
       - ${{ if eq(variables['VSCODE_BUILD_STAGE_MACOS_ARM64'], true) }}:
         - stage: macOSARM64
           displayName: macOS ARM64
-          dependsOn: []
+          dependsOn:
+            - ${{ if eq(variables.VSCODE_REQUIRE_BUILD_APPROVAL, true) }}:
+              - ApproveBuild
           pool:
             name: AcesShared
             os: macOS
@@ -685,7 +725,9 @@ extends:
       - ${{ if eq(variables['VSCODE_BUILD_STAGE_MACOS_UNIVERSAL'], true) }}:
         - stage: macOSUniversal
           displayName: macOS UNIVERSAL
-          dependsOn: []
+          dependsOn:
+            - ${{ if eq(variables.VSCODE_REQUIRE_BUILD_APPROVAL, true) }}:
+              - ApproveBuild
           pool:
             name: AcesShared
             os: macOS
@@ -698,7 +740,9 @@ extends:
 
       - ${{ if eq(variables['VSCODE_BUILD_STAGE_WEB'], true) }}:
         - stage: Web
-          dependsOn: []
+          dependsOn:
+            - ${{ if eq(variables.VSCODE_REQUIRE_BUILD_APPROVAL, true) }}:
+              - ApproveBuild
           jobs:
             - template: build/azure-pipelines/web/product-build-web.yml@self
               parameters:
@@ -706,7 +750,9 @@ extends:
 
       - ${{ if eq(parameters.VSCODE_BUILD_WEB_MOBILE, true) }}:
         - stage: Mobile
-          dependsOn: []
+          dependsOn:
+            - ${{ if eq(variables.VSCODE_REQUIRE_BUILD_APPROVAL, true) }}:
+              - ApproveBuild
           jobs:
             - template: build/azure-pipelines/web/product-build-web.yml@self
               parameters:
@@ -715,7 +761,9 @@ extends:
 
       - ${{ if eq(variables['VSCODE_PUBLISH'], true) }}:
         - stage: Publish
-          dependsOn: []
+          dependsOn:
+            - ${{ if eq(variables.VSCODE_REQUIRE_BUILD_APPROVAL, true) }}:
+              - ApproveBuild
           jobs:
             - template: build/azure-pipelines/product-publish.yml@self
               parameters:
@@ -726,7 +774,9 @@ extends:
 
       - ${{ if and(eq(variables['VSCODE_PUBLISH'], true), parameters.VSCODE_RELEASE, eq(variables['VSCODE_QUALITY'], 'insider'), eq(variables['VSCODE_PRIVATE_BUILD'], false), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))) }}:
         - stage: ApproveRelease
-          dependsOn: [] # run in parallel to compile stage
+          dependsOn: # run in parallel to compile stage
+            - ${{ if eq(variables.VSCODE_REQUIRE_BUILD_APPROVAL, true) }}:
+              - ApproveBuild
           pool:
             name: ${{ variables.VSCODE_UBUNTU_POOL }}
             os: linux
@@ -1030,7 +1080,9 @@ extends:
                   arch: arm64
 
       - stage: APIScan
-        dependsOn: []
+        dependsOn:
+          - ${{ if eq(variables.VSCODE_REQUIRE_BUILD_APPROVAL, true) }}:
+            - ApproveBuild
         pool:
           name: ${{ variables.VSCODE_WINDOWS_POOL }}
           os: windows

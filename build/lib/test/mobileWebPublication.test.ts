@@ -65,16 +65,18 @@ test('both product pipeline entry points select and publish Mobile independently
 		'../../azure-pipelines/product-build.yml': {
 			web: '${{ if eq(variables[\'VSCODE_BUILD_STAGE_WEB\'], true) }}',
 			mobile: '${{ if eq(parameters.VSCODE_BUILD_WEB_MOBILE, true) }}',
+			dependsOn: [{ '${{ if eq(variables.VSCODE_REQUIRE_BUILD_APPROVAL, true) }}': ['ApproveBuild'] }],
 		},
 		'../../azure-pipelines/product-build-template.yml': {
 			web: '${{ if and(eq(variables[\'VSCODE_CIBUILD\'], false), eq(variables[\'VSCODE_BUILD_STAGE_WEB\'], true)) }}',
 			mobile: '${{ if and(eq(variables[\'VSCODE_CIBUILD\'], false), eq(parameters.VSCODE_BUILD_WEB_MOBILE, true)) }}',
+			dependsOn: [],
 		},
 	};
 	const publishCondition = '${{ if eq(variables[\'VSCODE_PUBLISH\'], true) }}';
-	type Stage = { stage: string; dependsOn: string[]; jobs: { template: string; parameters?: { mobile?: boolean; VSCODE_BUILD_WEB_MOBILE?: string } }[] };
+	type Stage = { stage: string; dependsOn: (string | Record<string, string[]>)[]; jobs: { template: string; parameters?: { mobile?: boolean; VSCODE_BUILD_WEB_MOBILE?: string } }[] };
 	type StageEntry = { stage?: string; [condition: string]: Stage[] | string | undefined };
-	for (const [file, { web: webCondition, mobile: mobileCondition }] of Object.entries(conditions)) {
+	for (const [file, { web: webCondition, mobile: mobileCondition, dependsOn }] of Object.entries(conditions)) {
 		const source = await readFile(new URL(file, import.meta.url), 'utf8');
 		const pipeline = load(source) as {
 			parameters: { name: string; displayName?: string; type: string; default: boolean }[];
@@ -96,8 +98,8 @@ test('both product pipeline entry points select and publish Mobile independently
 			sharedQuality: stages.some(stage => stage.stage === 'Quality'),
 		}, {
 			targets: [
-				{ name: 'Web', dependsOn: [], jobs: [{ sharedTemplate: true, mobile: undefined }] },
-				{ name: 'Mobile', dependsOn: [], jobs: [{ sharedTemplate: true, mobile: true }] },
+				{ name: 'Web', dependsOn, jobs: [{ sharedTemplate: true, mobile: undefined }] },
+				{ name: 'Mobile', dependsOn, jobs: [{ sharedTemplate: true, mobile: true }] },
 			],
 			publishMobile: '${{ parameters.VSCODE_BUILD_WEB_MOBILE }}',
 			sharedQuality: true,
