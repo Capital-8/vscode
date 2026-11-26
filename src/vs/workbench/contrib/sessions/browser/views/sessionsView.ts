@@ -666,6 +666,7 @@ export class SessionsView extends ViewPane {
 			findWidgetContainer,
 			quickChatsInTimeGrouping: this.quickChatsInTimeGrouping,
 			inboxScopeStorageKey: this.groupingStorageKeys?.inboxScope,
+			inboxScopeApplies: this.inboxScopeAvailable,
 			inboxAutoAdvance: this.inboxAutoAdvance,
 			onSessionOpen: (resource, preserveFocus, sideBySide) => {
 				const session = this.sessionsManagementService.getSession(resource);
@@ -713,7 +714,6 @@ export class SessionsView extends ViewPane {
 		const inboxScope = this._register(this.instantiationService.createInstance(SessionsInboxScope, inboxScopeContainer, sessionsControl.filters, scopeSessions,
 			derived(reader => scopeEnvironments.read(reader).environments),
 			derived(reader => scopeEnvironments.read(reader).localEnvironmentIds)));
-		this._register(autorun(reader => sessionsControl.filters.setInboxScopeApplies(this.inboxScopeAvailable.read(reader))));
 		this._register(autorun(reader => {
 			scopeChanged.read(reader);
 			const hidden = this.chatEntitlementService.sentimentObs.read(reader).hidden;

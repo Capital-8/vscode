@@ -316,9 +316,12 @@ export class SessionsListFilters extends Disposable implements ISessionsListRese
 	/**
 	 * @param inboxScopeStorageKey The key under which it remembers the Inbox scope, so that the list of another window, such
 	 * as of an editor window's Chat view, remembers its own; by default, that of the Agents window.
+	 * @param inboxScopeApplies Whether the remembered Inbox scope applies, from the start: see {@link setInboxScopeApplies}.
+	 * By default, it always does.
 	 */
 	constructor(
 		inboxScopeStorageKey: string | undefined,
+		inboxScopeApplies: IObservable<boolean> | undefined,
 		@IStorageService private readonly storageService: IStorageService,
 		@ILogService private readonly logService: ILogService,
 		@IConfigurationService configurationService: IConfigurationService,
@@ -343,6 +346,11 @@ export class SessionsListFilters extends Disposable implements ISessionsListRese
 		}
 		this._worktree = storageService.get(SessionsListFilters.WORKTREE_STORAGE_KEY, StorageScope.PROFILE) || undefined;
 		this._inboxScope = this.readInboxScope();
+		if (inboxScopeApplies) {
+			// Before any consumer, such as the scope bar normalizing the scope, could write a scope that does not apply
+			this._inboxScopeApplies = inboxScopeApplies.get();
+			this._register(autorun(reader => this.setInboxScopeApplies(inboxScopeApplies.read(reader))));
+		}
 		this.migrateShowAutomationRuns(configurationService, logService);
 	}
 

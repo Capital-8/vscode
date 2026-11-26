@@ -363,6 +363,8 @@ interface ISessionsListControlOptions {
 	readonly quickChatsInTimeGrouping?: boolean;
 	/** The key under which it remembers the Inbox scope; by default, that of the Agents window. */
 	readonly inboxScopeStorageKey?: string;
+	/** Whether the remembered Inbox scope narrows the list, such as only where the list shows its pickers; it always does by default. */
+	readonly inboxScopeApplies?: IObservable<boolean>;
 	/**
 	 * Whether Inbox opens the next session that needs input after a reply or approval, as the
 	 * `sessions.list.inboxAutoAdvance` setting chooses; it does by default. Where it does not, replies stay in the current chat.
@@ -785,7 +787,7 @@ export class SessionsList extends Disposable implements ISessionsList {
 		const mainWindowHost = getMainWindowHost(sessionHostService);
 		this._mainWindowShown = derived(this, reader => shownChatOf(mainWindowHost, reader));
 		this.groupAppearancePicker = this._register(instantiationService.createInstance(SessionGroupAppearancePicker));
-		this.filters = this._register(instantiationService.createInstance(SessionsListFilters, options.inboxScopeStorageKey));
+		this.filters = this._register(instantiationService.createInstance(SessionsListFilters, options.inboxScopeStorageKey, options.inboxScopeApplies));
 		// A list that keeps replies and approvals in the current chat does not watch for them
 		if (options.inboxAutoAdvance !== false) {
 			this._register(chatService.onDidAcceptRequest(event => {

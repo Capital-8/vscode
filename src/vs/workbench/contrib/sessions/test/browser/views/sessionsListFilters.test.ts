@@ -34,7 +34,7 @@ suite('SessionsListFilters', () => {
 	const listAll = () => true;
 
 	function createFilters(storage = store.add(new InMemoryStorageService()), configurationService: IConfigurationService = new TestConfigurationService()): SessionsListFilters {
-		return store.add(new SessionsListFilters(undefined, storage, store.add(new NullLogService()), configurationService, upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase })));
+		return store.add(new SessionsListFilters(undefined, undefined, storage, store.add(new NullLogService()), configurationService, upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase })));
 	}
 
 	test('names built-in filter options in their action ids and only the kind of any other, kept unique by the number it is given', () => {
@@ -73,7 +73,7 @@ suite('SessionsListFilters', () => {
 			return { ...buildTestSession({ id, title: id }).session, workspace: constObservable(workspace) };
 		};
 		const sessions = [inFolder('main', '/work/repo'), inFolder('upper', '/work/repo.worktrees/Fix'), inFolder('lower', '/work/repo.worktrees/fix')];
-		const filters = store.add(new SessionsListFilters(undefined, store.add(new InMemoryStorageService()), store.add(new NullLogService()), new TestConfigurationService(), uriIdentityService));
+		const filters = store.add(new SessionsListFilters(undefined, undefined, store.add(new InMemoryStorageService()), store.add(new NullLogService()), new TestConfigurationService(), uriIdentityService));
 		const available = getWorktreeFilterKeys(sessions, listAll, uriIdentityService.extUri);
 		const options = getSessionFilterOptions(sessions, [], listAll, uriIdentityService.extUri).filter(option => option.filter.kind === 'worktree');
 		const visible = (label: string) => {
@@ -441,7 +441,7 @@ suite('SessionsListFilters', () => {
 
 	test('the Inbox scope of a list with its own storage key, such as the Chat view\'s, is apart from the Agents window\'s', () => {
 		const storage = store.add(new InMemoryStorageService());
-		const create = (key: string | undefined) => store.add(new SessionsListFilters(key, storage, store.add(new NullLogService()), new TestConfigurationService(), upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase })));
+		const create = (key: string | undefined) => store.add(new SessionsListFilters(key, undefined, storage, store.add(new NullLogService()), new TestConfigurationService(), upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase })));
 		create('chatViewSessionsList.inboxScope').setInboxEnvironment({ id: 'local', label: 'This Computer' });
 		create(undefined).setInboxEnvironment({ id: 'cloud', label: 'Cloud' });
 		assert.deepStrictEqual({ chat: create('chatViewSessionsList.inboxScope').inboxScope.environment?.id, agents: create(undefined).inboxScope.environment?.id }, { chat: 'local', agents: 'cloud' });

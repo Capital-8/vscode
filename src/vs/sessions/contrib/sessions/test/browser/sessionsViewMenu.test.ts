@@ -39,7 +39,7 @@ import { MockKeybindingService } from '../../../../../platform/keybinding/test/c
 import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { TestNotificationService } from '../../../../../platform/notification/test/common/testNotificationService.js';
 import { IInputOptions, IQuickInputService, IQuickPickItem } from '../../../../../platform/quickinput/common/quickInput.js';
-import { InMemoryStorageService } from '../../../../../platform/storage/common/storage.js';
+import { InMemoryStorageService, IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { NullTelemetryService } from '../../../../../platform/telemetry/common/telemetryUtils.js';
 import { IsSessionsWindowContext, WorkbenchModeContext } from '../../../../../workbench/common/contextkeys.js';
 import { WorkbenchMode } from '../../../../../platform/workspace/common/workspace.js';
@@ -112,7 +112,7 @@ suite('Sessions - View Menu', () => {
 		const capped = IsWorkspaceGroupCappedContext.bindTo(contextKeyService);
 		const compact = SessionsViewCompactContext.bindTo(contextKeyService);
 		const uriIdentityService = upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase });
-		const filters = store.add(new SessionsListFilters(undefined, store.add(new InMemoryStorageService()), store.add(new NullLogService()), configurationService, uriIdentityService));
+		const filters = store.add(new SessionsListFilters(undefined, undefined, store.add(new InMemoryStorageService()), store.add(new NullLogService()), configurationService, uriIdentityService));
 		const viewInstantiationService = store.add(new TestInstantiationService());
 		viewInstantiationService.stub(IUriIdentityService, uriIdentityService);
 		const sessionsChanged = store.add(new Emitter<void>());
@@ -324,7 +324,7 @@ suite('Sessions - View Menu', () => {
 		const harness = createListHarness(store, []);
 		const actionWidgetService = store.add(harness.instantiationService.createInstance(ActionWidgetService));
 		harness.instantiationService.stub(IActionWidgetService, actionWidgetService);
-		const filters = store.add(harness.instantiationService.createInstance(SessionsListFilters, undefined));
+		const filters = store.add(harness.instantiationService.createInstance(SessionsListFilters, undefined, undefined));
 		const connected = observableValue('connected', false);
 		const providers = [
 			upcastPartial<ISessionsProvider>({
@@ -459,7 +459,7 @@ suite('Sessions - View Menu', () => {
 			const actionWidgetService = store.add(harness.instantiationService.createInstance(ActionWidgetService));
 			harness.instantiationService.stub(IActionWidgetService, actionWidgetService);
 			const storage = store.add(new InMemoryStorageService());
-			let filters = store.add(new SessionsListFilters(undefined, storage, store.add(new NullLogService()), new TestConfigurationService(), upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase })));
+			let filters = store.add(new SessionsListFilters(undefined, undefined, storage, store.add(new NullLogService()), new TestConfigurationService(), upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase })));
 			const registration = observableValue<LocalAgentHostRegistration | undefined>('registration', undefined);
 			const localSession = buildTestSession({ id: 'local', title: 'Local', workspace: 'app' }).session;
 			const registrationSession = buildTestSession({ id: 'registration', title: 'Registration', workspace: 'app', environment: 'github' }).session;
@@ -472,7 +472,7 @@ suite('Sessions - View Menu', () => {
 			if (restored) {
 				filters.setInboxEnvironment({ id: 'github', label: 'My Computer (GitHub)' });
 				filters.setInboxWorkspace({ environment: 'github', resource: 'file:///app', label: 'app' });
-				filters = store.add(new SessionsListFilters(undefined, storage, store.add(new NullLogService()), new TestConfigurationService(), upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase })));
+				filters = store.add(new SessionsListFilters(undefined, undefined, storage, store.add(new NullLogService()), new TestConfigurationService(), upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase })));
 				registration.set('githubEnvironment', undefined);
 			}
 			const scope = store.add(harness.instantiationService.createInstance(SessionsInboxScope, harness.createContainer(), filters,
@@ -497,7 +497,7 @@ suite('Sessions - View Menu', () => {
 				workspace: scope.element.querySelector('.workspace-picker .action-label')?.textContent,
 				rows,
 				localMatches: filters.matchesInboxScope(localSession),
-				persisted: store.add(new SessionsListFilters(undefined, storage, store.add(new NullLogService()), new TestConfigurationService(), upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase }))).inboxScope,
+				persisted: store.add(new SessionsListFilters(undefined, undefined, storage, store.add(new NullLogService()), new TestConfigurationService(), upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase }))).inboxScope,
 			};
 			filters.setInboxEnvironment({ id: 'missing', label: 'Other Computer' });
 			assert.deepStrictEqual({ normalized, unavailable: { scope: filters.inboxScope, label: trigger.textContent } }, {
@@ -521,7 +521,7 @@ suite('Sessions - View Menu', () => {
 		const harness = createListHarness(store, []);
 		const actionWidgetService = store.add(harness.instantiationService.createInstance(ActionWidgetService));
 		harness.instantiationService.stub(IActionWidgetService, actionWidgetService);
-		const filters = store.add(harness.instantiationService.createInstance(SessionsListFilters, undefined));
+		const filters = store.add(harness.instantiationService.createInstance(SessionsListFilters, undefined, undefined));
 		const container = harness.createContainer();
 		const scope = store.add(harness.instantiationService.createInstance(SessionsInboxScope, container, filters, constObservable([]), constObservable([]), constObservable(new Set<string>())));
 		const trigger = scope.element.querySelector<HTMLElement>('.workspace-picker .action-label')!;
@@ -547,6 +547,22 @@ suite('Sessions - View Menu', () => {
 			hidden: { visible: false, expanded: 'false' },
 			disposed: { visible: false, expanded: 'false' },
 		});
+	});
+
+	test('the Inbox scope bar of a window where the scope does not apply, such as a folder window\'s Chat view, leaves the saved scope as it starts', () => {
+		const harness = createListHarness(store, []);
+		harness.instantiationService.stub(IActionWidgetService, store.add(harness.instantiationService.createInstance(ActionWidgetService)));
+		const storage = harness.instantiationService.get(IStorageService);
+		const key = 'chatViewSessionsList.inboxScope';
+		const saved = JSON.stringify({ environment: { id: 'this-mac', label: 'Mac' }, workspace: { environment: 'this-mac', resource: 'file:///app', label: 'app' } });
+		const start = (applies: boolean) => {
+			storage.store(key, saved, StorageScope.PROFILE, StorageTarget.MACHINE);
+			const filters = store.add(harness.instantiationService.createInstance(SessionsListFilters, key, constObservable(applies)));
+			// The bar takes an environment it now recognizes as this computer's as This Computer
+			store.add(harness.instantiationService.createInstance(SessionsInboxScope, harness.createContainer(), filters, constObservable([]), constObservable([]), constObservable(new Set(['this-mac']))));
+			return storage.get(key, StorageScope.PROFILE) === saved;
+		};
+		assert.deepStrictEqual({ folderWindow: start(false), emptyWindow: start(true) }, { folderWindow: true, emptyWindow: false });
 	});
 
 	test('Inbox replaces the environment submenu while preserving ordinary choices and scoping applications', () => {
