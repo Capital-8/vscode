@@ -71,6 +71,22 @@ suite('EditorWindowSessionsList', () => {
 		});
 	});
 
+	test('only the Chat view\'s list offers Inbox, remembered apart from the Agents window, and keeps replies in the current chat', () => {
+		const scoped = observableValue('scoped', true);
+		const describe = (inbox: boolean) => {
+			const options = createEditorWindowSessionsViewOptions({ id: SessionsViewId } as IViewletViewOptions, scoped, 'title', inbox);
+			return { groupings: options.groupings, groupingStorageKeys: options.groupingStorageKeys, inboxAutoAdvance: options.inboxAutoAdvance };
+		};
+		assert.deepStrictEqual({ editorWindow: describe(false), chatView: describe(true) }, {
+			editorWindow: { groupings: EDITOR_WINDOW_SESSIONS_GROUPINGS, groupingStorageKeys: undefined, inboxAutoAdvance: undefined },
+			chatView: {
+				groupings: { offered: [SessionsGrouping.Date, SessionsGrouping.Environment, SessionsGrouping.Inbox], default: SessionsGrouping.Date },
+				groupingStorageKeys: { grouping: 'chatViewSessionsList.grouping', nonInboxGrouping: 'chatViewSessionsList.nonInboxGrouping', inboxScope: 'chatViewSessionsList.inboxScope' },
+				inboxAutoAdvance: false,
+			},
+		});
+	});
+
 	test('only the header presentation differs between title and section', () => {
 		const scoped = observableValue('scoped', true);
 		const title = createEditorWindowSessionsViewOptions({ id: SessionsViewId } as IViewletViewOptions, scoped, 'title');

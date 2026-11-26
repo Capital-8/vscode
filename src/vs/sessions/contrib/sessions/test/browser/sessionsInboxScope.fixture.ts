@@ -52,7 +52,7 @@ function renderScope({ container, disposableStore, theme }: ComponentFixtureCont
 		id: 'workspace', title: 'Review navigation', workspace: 'agent-host-protocol-and-workbench-navigation', environment: 'ssh:work',
 	}).session;
 	const environment = { id: 'ssh:work', label: 'Development Workstation', isConnected: constObservable(!options.disconnected) };
-	const filters = disposableStore.add(instantiationService.createInstance(SessionsListFilters));
+	const filters = disposableStore.add(instantiationService.createInstance(SessionsListFilters, undefined));
 	if (options.selected) {
 		filters.setInboxEnvironment(environment);
 		filters.setInboxWorkspace(getInboxWorkspaceFilter(session));

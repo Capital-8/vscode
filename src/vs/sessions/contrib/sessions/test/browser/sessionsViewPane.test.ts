@@ -22,8 +22,8 @@ import { Workbench } from '../../../../browser/workbench.js';
 import { ISession, SessionStatus } from '../../../../../workbench/services/sessions/common/session.js';
 import { ISessionComparison, SessionComparisonParticipantRole } from '../../../../../workbench/contrib/sessions/common/sessionComparison.js';
 import { AICustomizationShortcutsWidget } from '../../../../../workbench/contrib/sessions/browser/aiCustomizationShortcutsWidget.js';
-import { DEFAULT_SESSIONS_GROUPINGS, getCustomizationsPresentation, getStoredSessionsGrouping, SessionsView, SessionsViewGroupingContext } from '../../../../../workbench/contrib/sessions/browser/views/sessionsView.js';
-import { EDITOR_WINDOW_SESSIONS_GROUPINGS } from '../../../../../workbench/contrib/sessions/browser/agentsView/editorWindowSessionsList.js';
+import { DEFAULT_SESSIONS_GROUPINGS, getCustomizationsPresentation, getStoredSessionsGrouping, ISessionsViewGroupingStorageKeys, SessionsView, SessionsViewGroupingContext } from '../../../../../workbench/contrib/sessions/browser/views/sessionsView.js';
+import { CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS, CHAT_VIEW_SESSIONS_GROUPINGS, EDITOR_WINDOW_SESSIONS_GROUPINGS } from '../../../../../workbench/contrib/sessions/browser/agentsView/editorWindowSessionsList.js';
 import { SessionsGrouping, SessionsSorting } from '../../../../../workbench/contrib/sessions/browser/views/sessionsListCommon.js';
 import { SESSIONS_LIST_INBOX_ENABLED_SETTING } from '../../../../../workbench/contrib/sessions/common/sessionConfig.js';
 import { workbenchInstantiationService } from '../../../../../workbench/test/browser/workbenchTestServices.js';
@@ -191,12 +191,14 @@ suite('Sessions - SessionsViewPane', () => {
 		storageService = disposables.add(new InMemoryStorageService()),
 		groupings?: { readonly offered: readonly SessionsGrouping[]; readonly default: SessionsGrouping },
 		hidden = false,
+		groupingStorageKeys?: ISessionsViewGroupingStorageKeys,
 	) {
 		const sentimentChanged = disposables.add(new Emitter<void>());
 		const contextKeyService = disposables.add(new ContextKeyService(configurationService));
 		const host = {
 			currentGrouping: undefined as SessionsGrouping | undefined,
 			groupings,
+			groupingStorageKeys,
 			configurationService,
 			storageService,
 			chatEntitlementService: { sentiment: { hidden }, onDidChangeSentiment: sentimentChanged.event },
@@ -397,6 +399,53 @@ suite('Sessions - SessionsViewPane', () => {
 			notOffered: { shown: SessionsGrouping.Date, saved: SessionsGrouping.Repository },
 			worktree: { agentsWindow: SessionsGrouping.Workspace, editorWindow: SessionsGrouping.Date, saved: 'worktree' },
 			unknown: undefined,
+		});
+	});
+
+	test('the Chat view and the Agents window each remember their own grouping and Inbox Mode, across reloads', () => {
+		const configurationService = new TestConfigurationService({ [SESSIONS_LIST_INBOX_ENABLED_SETTING]: true });
+		disposables.add(configurationService.onDidChangeConfigurationEmitter);
+		const storageService = disposables.add(new InMemoryStorageService());
+		const agents = () => createGroupingHost(configurationService, storageService);
+		const chat = () => createGroupingHost(configurationService, storageService, CHAT_VIEW_SESSIONS_GROUPINGS, false, CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS);
+		const agentsWindow = agents();
+		agentsWindow.setGrouping(SessionsGrouping.Repository);
+		const chatView = chat();
+		const chatInitially = chatView.grouping;
+		chatView.setGrouping(SessionsGrouping.Environment);
+		chatView.toggleInbox();
+		const afterChatInbox = { chat: chat().grouping, agents: agents().grouping };
+		agentsWindow.toggleInbox();
+		chatView.toggleInbox();
+		const afterAgentsInbox = { chat: chat().grouping, agents: agents().grouping };
+		assert.deepStrictEqual({ chatInitially, afterChatInbox, afterAgentsInbox, agentsSaved: storageService.get('sessionsViewPane.grouping', StorageScope.PROFILE) }, {
+			chatInitially: SessionsGrouping.Date,
+			afterChatInbox: { chat: SessionsGrouping.Inbox, agents: SessionsGrouping.Repository },
+			afterAgentsInbox: { chat: SessionsGrouping.Environment, agents: SessionsGrouping.Inbox },
+			agentsSaved: SessionsGrouping.Inbox,
+		});
+	});
+
+	test('the Chat view leaves Inbox for its own previous grouping when the setting or AI turns off, and the Agents window\'s Inbox stays', async () => {
+		const configurationService = new TestConfigurationService({ [SESSIONS_LIST_INBOX_ENABLED_SETTING]: true });
+		disposables.add(configurationService.onDidChangeConfigurationEmitter);
+		const storageService = disposables.add(new InMemoryStorageService());
+		const agentsWindow = createGroupingHost(configurationService, storageService);
+		agentsWindow.toggleInbox();
+		const chatView = createGroupingHost(configurationService, storageService, CHAT_VIEW_SESSIONS_GROUPINGS, false, CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS);
+		chatView.setGrouping(SessionsGrouping.Environment);
+		chatView.toggleInbox();
+		await configurationService.setUserConfiguration(SESSIONS_LIST_INBOX_ENABLED_SETTING, false);
+		chatView.updateInboxAvailability();
+		const settingOff = { chat: chatView.grouping, agentsSaved: storageService.get('sessionsViewPane.grouping', StorageScope.PROFILE) };
+		await configurationService.setUserConfiguration(SESSIONS_LIST_INBOX_ENABLED_SETTING, true);
+		chatView.toggleInbox();
+		chatView.chatEntitlementService.sentiment.hidden = true;
+		chatView.sentimentChanged.fire();
+		assert.deepStrictEqual({ settingOff, aiHidden: chatView.grouping, reloaded: createGroupingHost(configurationService, storageService, CHAT_VIEW_SESSIONS_GROUPINGS, false, CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS).grouping }, {
+			settingOff: { chat: SessionsGrouping.Environment, agentsSaved: SessionsGrouping.Inbox },
+			aiHidden: SessionsGrouping.Environment,
+			reloaded: SessionsGrouping.Environment,
 		});
 	});
 

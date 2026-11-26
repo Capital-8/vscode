@@ -361,6 +361,13 @@ interface ISessionsListControlOptions {
 	 * do, rather than among the time sections; it does not by default. A {@link scoped} list has no Chats section at all.
 	 */
 	readonly quickChatsInTimeGrouping?: boolean;
+	/** The key under which it remembers the Inbox scope; by default, that of the Agents window. */
+	readonly inboxScopeStorageKey?: string;
+	/**
+	 * Whether Inbox opens the next session that needs input after a reply or approval, as the
+	 * `sessions.list.inboxAutoAdvance` setting chooses; it does by default. Where it does not, replies stay in the current chat.
+	 */
+	readonly inboxAutoAdvance?: boolean;
 	onSessionOpen(resource: URI, preserveFocus: boolean, sideBySide: boolean): void | Promise<void>;
 
 	/**
@@ -778,7 +785,7 @@ export class SessionsList extends Disposable implements ISessionsList {
 		const mainWindowHost = getMainWindowHost(sessionHostService);
 		this._mainWindowShown = derived(this, reader => shownChatOf(mainWindowHost, reader));
 		this.groupAppearancePicker = this._register(instantiationService.createInstance(SessionGroupAppearancePicker));
-		this.filters = this._register(instantiationService.createInstance(SessionsListFilters));
+		this.filters = this._register(instantiationService.createInstance(SessionsListFilters, options.inboxScopeStorageKey));
 		this._register(chatService.onDidAcceptRequest(event => {
 			if (!event.isNewSession && !event.agentHostMessageOrigin) {
 				this.advanceInboxAfterReplyOrApproval(event.chatSessionResource);
@@ -5660,6 +5667,9 @@ export class SessionsList extends Disposable implements ISessionsList {
 	}
 
 	private isInboxAutoAdvanceEnabled(): boolean {
+		if (this.options.inboxAutoAdvance === false) {
+			return false;
+		}
 		const mode = this.configurationService.getValue<'auto' | 'on' | 'off' | 'newSession'>(SESSIONS_LIST_INBOX_AUTO_ADVANCE_SETTING) ?? 'auto';
 		return mode === 'newSession' || mode === 'on' || mode === 'auto' && !this.accessibilityService.isScreenReaderOptimized();
 	}

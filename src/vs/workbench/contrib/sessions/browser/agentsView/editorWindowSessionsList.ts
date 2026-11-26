@@ -15,10 +15,23 @@ import { IViewsService } from '../../../../services/views/common/viewsService.js
 import { registerSessionsListConfiguration } from '../sessionsConfiguration.js';
 import { SessionsGrouping } from '../views/sessionsListCommon.js';
 import { registerSessionsListActions, registerSessionsListReadStateMenus, SessionsArchiveActionsContribution } from '../views/sessionsListActions.js';
-import { EditorWindowSessionsContext, ISessionsViewOptions, SessionsView } from '../views/sessionsView.js';
+import { EditorWindowSessionsContext, ISessionsViewGroupingStorageKeys, ISessionsViewOptions, SessionsView } from '../views/sessionsView.js';
 
 /** The editor window's Sessions view groups only by time or environment, by time until one is chosen. */
 export const EDITOR_WINDOW_SESSIONS_GROUPINGS = { offered: [SessionsGrouping.Date, SessionsGrouping.Environment], default: SessionsGrouping.Date };
+
+/** The Chat view's sessions list also offers Inbox, while the Inbox setting is on, by time until a grouping is chosen. */
+export const CHAT_VIEW_SESSIONS_GROUPINGS = { offered: [...EDITOR_WINDOW_SESSIONS_GROUPINGS.offered, SessionsGrouping.Inbox], default: SessionsGrouping.Date };
+
+/**
+ * Where the Chat view's sessions list remembers its grouping, the grouping Inbox returns to and its Inbox scope: apart from
+ * the Agents window, so that choosing Inbox in one window never switches the other.
+ */
+export const CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS: ISessionsViewGroupingStorageKeys = {
+	grouping: 'chatViewSessionsList.grouping',
+	nonInboxGrouping: 'chatViewSessionsList.nonInboxGrouping',
+	inboxScope: 'chatViewSessionsList.inboxScope',
+};
 
 /** The services of the Sessions view, which its constructor takes after its options. */
 type SessionsViewServices = ConstructorParameters<typeof SessionsView> extends [ISessionsViewOptions, ...infer Services] ? Services : never;
@@ -32,17 +45,20 @@ export type EditorWindowSessionsHeader = 'title' | 'section';
 /**
  * The options of the Sessions view in an editor window, wherever it shows: the actions of its header in its title or in its
  * section header (`header`), without the customizations, listing the sessions of the window's folders only while it has some (`scoped`), and grouped as
- * {@link EDITOR_WINDOW_SESSIONS_GROUPINGS} says, with the "Chats" section also under time grouping.
+ * {@link EDITOR_WINDOW_SESSIONS_GROUPINGS} says, with the "Chats" section also under time grouping. With `inbox`, as the Chat
+ * view's sessions list, it also offers Inbox ({@link CHAT_VIEW_SESSIONS_GROUPINGS}), remembers its grouping apart from the
+ * Agents window ({@link CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS}), and keeps replies and approvals in the current chat.
  */
-export function createEditorWindowSessionsViewOptions(options: IViewletViewOptions, scoped: IObservable<boolean>, header: EditorWindowSessionsHeader = 'title'): IViewletViewOptions & ISessionsViewOptions {
-	return { ...options, headerInTitle: header === 'title', showCustomizations: false, scoped, groupings: EDITOR_WINDOW_SESSIONS_GROUPINGS, quickChatsInTimeGrouping: true };
+export function createEditorWindowSessionsViewOptions(options: IViewletViewOptions, scoped: IObservable<boolean>, header: EditorWindowSessionsHeader = 'title', inbox = false): IViewletViewOptions & ISessionsViewOptions {
+	const view: IViewletViewOptions & ISessionsViewOptions = { ...options, headerInTitle: header === 'title', showCustomizations: false, scoped, groupings: EDITOR_WINDOW_SESSIONS_GROUPINGS, quickChatsInTimeGrouping: true };
+	return inbox ? { ...view, groupings: CHAT_VIEW_SESSIONS_GROUPINGS, groupingStorageKeys: CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS, inboxAutoAdvance: false } : view;
 }
 
 /** The Sessions view of an editor window, with {@link createEditorWindowSessionsViewOptions}. */
-export function createEditorWindowSessionsView(scoped: IObservable<boolean>, header: EditorWindowSessionsHeader = 'title'): typeof SessionsView {
+export function createEditorWindowSessionsView(scoped: IObservable<boolean>, header: EditorWindowSessionsHeader = 'title', inbox = false): typeof SessionsView {
 	return class EditorWindowSessionsView extends SessionsView {
 		constructor(options: IViewletViewOptions, ...services: SessionsViewServices) {
-			super(createEditorWindowSessionsViewOptions(options, scoped, header), ...services);
+			super(createEditorWindowSessionsViewOptions(options, scoped, header, inbox), ...services);
 		}
 	};
 }

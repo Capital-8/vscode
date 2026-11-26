@@ -309,13 +309,21 @@ export class SessionsListFilters extends Disposable implements ISessionsListRese
 	private readonly _onDidChange = this._register(new Emitter<void>());
 	readonly onDidChange = this._onDidChange.event;
 
+	private readonly inboxScopeStorageKey: string;
+
+	/**
+	 * @param inboxScopeStorageKey The key under which it remembers the Inbox scope, so that the list of another window, such
+	 * as of an editor window's Chat view, remembers its own; by default, that of the Agents window.
+	 */
 	constructor(
+		inboxScopeStorageKey: string | undefined,
 		@IStorageService private readonly storageService: IStorageService,
 		@ILogService logService: ILogService,
 		@IConfigurationService configurationService: IConfigurationService,
 		@IUriIdentityService private readonly uriIdentityService: IUriIdentityService,
 	) {
 		super();
+		this.inboxScopeStorageKey = inboxScopeStorageKey ?? SessionsListFilters.INBOX_SCOPE_STORAGE_KEY;
 		this.excluded = new Map();
 		const raw = storageService.get(SessionsListFilters.STORAGE_KEY, StorageScope.PROFILE);
 		if (raw !== undefined) {
@@ -332,7 +340,7 @@ export class SessionsListFilters extends Disposable implements ISessionsListRese
 			}
 		}
 		this._worktree = storageService.get(SessionsListFilters.WORKTREE_STORAGE_KEY, StorageScope.PROFILE) || undefined;
-		const scope = storageService.get(SessionsListFilters.INBOX_SCOPE_STORAGE_KEY, StorageScope.PROFILE);
+		const scope = storageService.get(this.inboxScopeStorageKey, StorageScope.PROFILE);
 		if (scope !== undefined) {
 			try {
 				const value: unknown = JSON.parse(scope);
@@ -495,9 +503,9 @@ export class SessionsListFilters extends Disposable implements ISessionsListRese
 
 	private save(): void {
 		if (this.hasInboxScope) {
-			this.storageService.store(SessionsListFilters.INBOX_SCOPE_STORAGE_KEY, JSON.stringify(this._inboxScope), StorageScope.PROFILE, StorageTarget.MACHINE);
+			this.storageService.store(this.inboxScopeStorageKey, JSON.stringify(this._inboxScope), StorageScope.PROFILE, StorageTarget.MACHINE);
 		} else {
-			this.storageService.remove(SessionsListFilters.INBOX_SCOPE_STORAGE_KEY, StorageScope.PROFILE);
+			this.storageService.remove(this.inboxScopeStorageKey, StorageScope.PROFILE);
 		}
 		if (this._worktree === undefined) {
 			this.storageService.remove(SessionsListFilters.WORKTREE_STORAGE_KEY, StorageScope.PROFILE);

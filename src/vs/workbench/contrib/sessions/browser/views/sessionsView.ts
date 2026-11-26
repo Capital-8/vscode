@@ -86,8 +86,18 @@ import { ChatConfiguration } from '../../../chat/common/constants.js';
 
 const $ = DOM.$;
 export const SessionsViewId = 'sessions.workbench.view.sessionsView';
-const GROUPING_STORAGE_KEY = 'sessionsViewPane.grouping';
-const NON_INBOX_GROUPING_STORAGE_KEY = 'sessionsViewPane.nonInboxGrouping';
+
+/** The storage keys under which a Sessions view remembers its grouping, the grouping Inbox returns to and the Inbox scope. */
+export interface ISessionsViewGroupingStorageKeys {
+	readonly grouping: string;
+	readonly nonInboxGrouping: string;
+	readonly inboxScope: string;
+}
+
+const DEFAULT_GROUPING_STORAGE_KEYS: Omit<ISessionsViewGroupingStorageKeys, 'inboxScope'> = {
+	grouping: 'sessionsViewPane.grouping',
+	nonInboxGrouping: 'sessionsViewPane.nonInboxGrouping',
+};
 const SORTING_STORAGE_KEY = 'sessionsViewPane.sorting';
 const COMPACT_STORAGE_KEY = 'sessionsViewPane.compact';
 const CUSTOMIZATIONS_MIN_HEIGHT = 129;
@@ -290,6 +300,15 @@ export interface ISessionsViewOptions extends IViewPaneOptions {
 
 	/** Whether grouping by time lists the sessions without a workspace in the "Chats" section. See the sessions list's option. */
 	readonly quickChatsInTimeGrouping?: boolean;
+
+	/**
+	 * The keys under which it remembers its grouping and Inbox scope, so that a view in another window, such as the Chat view
+	 * of an editor window, remembers its own; by default, those of the Agents window.
+	 */
+	readonly groupingStorageKeys?: ISessionsViewGroupingStorageKeys;
+
+	/** Whether Inbox opens the next session that needs input after a reply or approval; it does by default. */
+	readonly inboxAutoAdvance?: boolean;
 }
 
 export class SessionsView extends ViewPane {
@@ -332,6 +351,8 @@ export class SessionsView extends ViewPane {
 	private readonly headerInTitle: boolean;
 	private readonly hideCustomizations: boolean;
 	private readonly groupings: ISessionsViewOptions['groupings'];
+	private readonly groupingStorageKeys: ISessionsViewGroupingStorageKeys | undefined;
+	private readonly inboxAutoAdvance: boolean | undefined;
 	private readonly quickChatsInTimeGrouping: boolean;
 	private readonly scoped: IObservable<boolean> | undefined;
 
@@ -381,6 +402,8 @@ export class SessionsView extends ViewPane {
 
 		// Restore persisted grouping
 		this.groupings = options.groupings;
+		this.groupingStorageKeys = options.groupingStorageKeys;
+		this.inboxAutoAdvance = options.inboxAutoAdvance;
 		this.quickChatsInTimeGrouping = !!options.quickChatsInTimeGrouping;
 		this.initializeGrouping();
 
@@ -520,6 +543,8 @@ export class SessionsView extends ViewPane {
 			scoped: this.scoped,
 			findWidgetContainer,
 			quickChatsInTimeGrouping: this.quickChatsInTimeGrouping,
+			inboxScopeStorageKey: this.groupingStorageKeys?.inboxScope,
+			inboxAutoAdvance: this.inboxAutoAdvance,
 			onSessionOpen: (resource, preserveFocus, sideBySide) => {
 				const session = this.sessionsManagementService.getSession(resource);
 				if (!session) {
@@ -1354,7 +1379,7 @@ export class SessionsView extends ViewPane {
 	}
 
 	private get nonInboxGrouping(): SessionsGrouping {
-		return getStoredSessionsGrouping(this.storageService.get(NON_INBOX_GROUPING_STORAGE_KEY, StorageScope.PROFILE),
+		return getStoredSessionsGrouping(this.storageService.get((this.groupingStorageKeys ?? DEFAULT_GROUPING_STORAGE_KEYS).nonInboxGrouping, StorageScope.PROFILE),
 			this.offeredGroupings.filter(grouping => grouping !== SessionsGrouping.Inbox)) ?? this.groupings?.default ?? SessionsGrouping.Workspace;
 	}
 
@@ -1365,7 +1390,7 @@ export class SessionsView extends ViewPane {
 	}
 
 	private initializeGrouping(): void {
-		this.currentGrouping = getStoredSessionsGrouping(this.storageService.get(GROUPING_STORAGE_KEY, StorageScope.PROFILE), this.offeredGroupings);
+		this.currentGrouping = getStoredSessionsGrouping(this.storageService.get((this.groupingStorageKeys ?? DEFAULT_GROUPING_STORAGE_KEYS).grouping, StorageScope.PROFILE), this.offeredGroupings);
 		this.updateInboxAvailability();
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(SESSIONS_LIST_INBOX_ENABLED_SETTING) || e.affectsConfiguration('chat.disableAIFeatures')) {
@@ -1380,7 +1405,9 @@ export class SessionsView extends ViewPane {
 			return;
 		}
 		const activeElement = DOM.getActiveElement();
-		const restoreFocus = DOM.isHTMLElement(activeElement) && activeElement.classList.contains('codicon-inbox') && this.element?.contains(activeElement);
+		// Where the view's header is in the title of a host view, such as the Chat view, the toggle is in the host's title
+		const titleOwner = this.headerInTitle && this.element?.parentElement?.closest('.pane') || this.element;
+		const restoreFocus = DOM.isHTMLElement(activeElement) && activeElement.classList.contains('codicon-inbox') && !!titleOwner?.contains(activeElement);
 		if (this.grouping === SessionsGrouping.Inbox) {
 			this.setGrouping(this.nonInboxGrouping);
 		}
@@ -1413,11 +1440,12 @@ export class SessionsView extends ViewPane {
 		}
 
 		const preserveCollapseState = this.grouping === SessionsGrouping.Inbox || grouping === SessionsGrouping.Inbox;
+		const storageKeys = this.groupingStorageKeys ?? DEFAULT_GROUPING_STORAGE_KEYS;
 		if (this.grouping !== SessionsGrouping.Inbox) {
-			this.storageService.store(NON_INBOX_GROUPING_STORAGE_KEY, this.grouping, StorageScope.PROFILE, StorageTarget.USER);
+			this.storageService.store(storageKeys.nonInboxGrouping, this.grouping, StorageScope.PROFILE, StorageTarget.USER);
 		}
 		this.currentGrouping = grouping;
-		this.storageService.store(GROUPING_STORAGE_KEY, this.currentGrouping, StorageScope.PROFILE, StorageTarget.USER);
+		this.storageService.store(storageKeys.grouping, this.currentGrouping, StorageScope.PROFILE, StorageTarget.USER);
 		this.groupingContextKey?.set(this.currentGrouping);
 		if (!preserveCollapseState) {
 			this.sessionsControl?.resetSectionCollapseState();

@@ -10,6 +10,7 @@ import { upcastPartial } from '../../../../../../base/test/common/mock.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
 import { isIMenuItem, MenuId, MenuRegistry } from '../../../../../../platform/actions/common/actions.js';
 import { TestConfigurationService } from '../../../../../../platform/configuration/test/common/testConfigurationService.js';
+import { SESSIONS_LIST_INBOX_ENABLED_SETTING } from '../../../common/sessionConfig.js';
 import { IConfigurationChangeEvent, IConfigurationOverrides, IConfigurationService } from '../../../../../../platform/configuration/common/configuration.js';
 import { IContextKeyService } from '../../../../../../platform/contextkey/common/contextkey.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../../../platform/instantiation/common/instantiation.js';
@@ -202,7 +203,7 @@ suite('ChatViewSessionsGate', () => {
 				if (ctor !== ChatViewSessionsListAccessibilityHelp) {
 					throw new Error(`created ${ctor.name}`);
 				}
-				return new ChatViewSessionsListAccessibilityHelp(upcastPartial<IViewsService>({}), upcastPartial<ISessionsViewLocator>({}));
+				return new ChatViewSessionsListAccessibilityHelp(upcastPartial<IViewsService>({}), upcastPartial<ISessionsViewLocator>({}), new TestConfigurationService());
 			}) as IInstantiationService['createInstance'],
 		});
 		disposables.add(new ChatViewSessionsGate(configurationService, instantiationService, environmentService, new ChatViewSessionsListService(configurationService, environmentService)));
@@ -293,14 +294,20 @@ suite('ChatViewSessionsGate', () => {
 		]);
 	});
 
-	test('the accessibility help of the list helps in the sessions list of the Chat view, not on its Undo notice, elsewhere in the Chat view, nor in the Agents window, and returns focus to the list as it closes', () => {
+	test('the accessibility help of the list helps in the sessions list of the Chat view, not on its Undo notice, elsewhere in the Chat view, nor in the Agents window, and returns focus to the list as it closes, and tells about Inbox Mode while it is enabled', async () => {
 		const focused: string[] = [];
 		const instantiationService = disposables.add(new TestInstantiationService());
 		instantiationService.stub(IViewsService, upcastPartial<IViewsService>({ getViewWithId: () => null }));
 		instantiationService.stub(ISessionsViewLocator, upcastPartial<ISessionsViewLocator>({ getEmbeddedView: () => upcastPartial<SessionsView>({ focus: () => { focused.push('list'); } }) }));
+		const configurationService = new TestConfigurationService();
+		instantiationService.stub(IConfigurationService, configurationService);
 		const help = instantiationService.createInstance(ChatViewSessionsListAccessibilityHelp);
 		const provider = disposables.add(help.getProvider(upcastPartial<ServicesAccessor>({})));
 		provider.onClose();
+		const inboxHelp = () => help.getProvider(upcastPartial<ServicesAccessor>({}));
+		const withoutInbox = disposables.add(inboxHelp()).provideContent().includes('Toggle Inbox');
+		await configurationService.setUserConfiguration(SESSIONS_LIST_INBOX_ENABLED_SETTING, true);
+		const withInbox = disposables.add(inboxHelp()).provideContent().includes('Toggle Inbox');
 
 		const shows = (view: string, inList: boolean, sessionsWindow = false, noticeFocused = false) => help.when?.evaluate({
 			getValue: <T>(key: string) => ({ [FocusedViewContext.key]: view, [InSessionsViewContext.key]: inList, [IsSessionsWindowContext.key]: sessionsWindow, [SessionsListNotificationFocused.key]: noticeFocused } as Record<string, unknown>)[key] as T,
@@ -313,6 +320,7 @@ suite('ChatViewSessionsGate', () => {
 			inAgentsView: shows(SessionsViewId, false),
 			verbosity: provider.verbositySettingKey,
 			focused,
+			inboxHelp: { withoutInbox, withInbox },
 		}, {
 			inList: true,
 			inChat: false,
@@ -321,6 +329,7 @@ suite('ChatViewSessionsGate', () => {
 			inAgentsView: false,
 			verbosity: AccessibilityVerbositySettingId.Chat,
 			focused: ['list'],
+			inboxHelp: { withoutInbox: false, withInbox: true },
 		});
 	});
 

@@ -112,7 +112,7 @@ suite('Sessions - View Menu', () => {
 		const capped = IsWorkspaceGroupCappedContext.bindTo(contextKeyService);
 		const compact = SessionsViewCompactContext.bindTo(contextKeyService);
 		const uriIdentityService = upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase });
-		const filters = store.add(new SessionsListFilters(store.add(new InMemoryStorageService()), store.add(new NullLogService()), configurationService, uriIdentityService));
+		const filters = store.add(new SessionsListFilters(undefined, store.add(new InMemoryStorageService()), store.add(new NullLogService()), configurationService, uriIdentityService));
 		const viewInstantiationService = store.add(new TestInstantiationService());
 		viewInstantiationService.stub(IUriIdentityService, uriIdentityService);
 		const sessionsChanged = store.add(new Emitter<void>());
@@ -324,7 +324,7 @@ suite('Sessions - View Menu', () => {
 		const harness = createListHarness(store, []);
 		const actionWidgetService = store.add(harness.instantiationService.createInstance(ActionWidgetService));
 		harness.instantiationService.stub(IActionWidgetService, actionWidgetService);
-		const filters = store.add(harness.instantiationService.createInstance(SessionsListFilters));
+		const filters = store.add(harness.instantiationService.createInstance(SessionsListFilters, undefined));
 		const connected = observableValue('connected', false);
 		const providers = [
 			upcastPartial<ISessionsProvider>({
@@ -459,7 +459,7 @@ suite('Sessions - View Menu', () => {
 			const actionWidgetService = store.add(harness.instantiationService.createInstance(ActionWidgetService));
 			harness.instantiationService.stub(IActionWidgetService, actionWidgetService);
 			const storage = store.add(new InMemoryStorageService());
-			let filters = store.add(new SessionsListFilters(storage, store.add(new NullLogService()), new TestConfigurationService(), upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase })));
+			let filters = store.add(new SessionsListFilters(undefined, storage, store.add(new NullLogService()), new TestConfigurationService(), upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase })));
 			const registration = observableValue<LocalAgentHostRegistration | undefined>('registration', undefined);
 			const localSession = buildTestSession({ id: 'local', title: 'Local', workspace: 'app' }).session;
 			const registrationSession = buildTestSession({ id: 'registration', title: 'Registration', workspace: 'app', environment: 'github' }).session;
@@ -472,7 +472,7 @@ suite('Sessions - View Menu', () => {
 			if (restored) {
 				filters.setInboxEnvironment({ id: 'github', label: 'My Computer (GitHub)' });
 				filters.setInboxWorkspace({ environment: 'github', resource: 'file:///app', label: 'app' });
-				filters = store.add(new SessionsListFilters(storage, store.add(new NullLogService()), new TestConfigurationService(), upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase })));
+				filters = store.add(new SessionsListFilters(undefined, storage, store.add(new NullLogService()), new TestConfigurationService(), upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase })));
 				registration.set('githubEnvironment', undefined);
 			}
 			const scope = store.add(harness.instantiationService.createInstance(SessionsInboxScope, harness.createContainer(), filters,
@@ -497,7 +497,7 @@ suite('Sessions - View Menu', () => {
 				workspace: scope.element.querySelector('.workspace-picker .action-label')?.textContent,
 				rows,
 				localMatches: filters.matchesInboxScope(localSession),
-				persisted: store.add(new SessionsListFilters(storage, store.add(new NullLogService()), new TestConfigurationService(), upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase }))).inboxScope,
+				persisted: store.add(new SessionsListFilters(undefined, storage, store.add(new NullLogService()), new TestConfigurationService(), upcastPartial<IUriIdentityService>({ extUri: extUriBiasedIgnorePathCase }))).inboxScope,
 			};
 			filters.setInboxEnvironment({ id: 'missing', label: 'Other Computer' });
 			assert.deepStrictEqual({ normalized, unavailable: { scope: filters.inboxScope, label: trigger.textContent } }, {
@@ -521,7 +521,7 @@ suite('Sessions - View Menu', () => {
 		const harness = createListHarness(store, []);
 		const actionWidgetService = store.add(harness.instantiationService.createInstance(ActionWidgetService));
 		harness.instantiationService.stub(IActionWidgetService, actionWidgetService);
-		const filters = store.add(harness.instantiationService.createInstance(SessionsListFilters));
+		const filters = store.add(harness.instantiationService.createInstance(SessionsListFilters, undefined));
 		const container = harness.createContainer();
 		const scope = store.add(harness.instantiationService.createInstance(SessionsInboxScope, container, filters, constObservable([]), constObservable([]), constObservable(new Set<string>())));
 		const trigger = scope.element.querySelector<HTMLElement>('.workspace-picker .action-label')!;

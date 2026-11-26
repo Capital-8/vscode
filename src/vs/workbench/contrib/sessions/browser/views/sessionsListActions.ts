@@ -5,6 +5,7 @@
 
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { status } from '../../../../../base/browser/ui/aria/aria.js';
+import { getActiveElement, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { toErrorMessage } from '../../../../../base/common/errorMessage.js';
 import { onUnexpectedError } from '../../../../../base/common/errors.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
@@ -1167,7 +1168,17 @@ function createSessionsListActions(): DisposableStore {
 			});
 		}
 		run(accessor: ServicesAccessor): void {
-			getActiveSessionsView(accessor)?.toggleInbox();
+			const view = getActiveSessionsView(accessor);
+			if (!view) {
+				return;
+			}
+			// The toggle tells its checked state itself; from the title overflow or the Command Palette, the change would be silent
+			const activeElement = getActiveElement();
+			const fromToggle = isHTMLElement(activeElement) && activeElement.classList.contains('codicon-inbox');
+			view.toggleInbox();
+			if (!fromToggle) {
+				status(view.grouping === SessionsGrouping.Inbox ? localize('inboxModeOn', "Inbox Mode on.") : localize('inboxModeOff', "Inbox Mode off."));
+			}
 		}
 	}));
 
