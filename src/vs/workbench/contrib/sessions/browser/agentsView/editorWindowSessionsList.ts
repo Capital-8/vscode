@@ -52,11 +52,12 @@ export type EditorWindowSessionsHeader = 'title' | 'section';
  * section header (`header`), without the customizations, listing the sessions of the window's folders only while it has some (`scoped`), and grouped as
  * {@link EDITOR_WINDOW_SESSIONS_GROUPINGS} says, with the "Chats" section also under time grouping. With `inbox`, as the Chat
  * view's sessions list, it also offers Inbox ({@link CHAT_VIEW_SESSIONS_GROUPINGS}), remembers its grouping apart from the
- * Agents window ({@link CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS}), and keeps replies and approvals in the current chat.
+ * Agents window ({@link CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS}), keeps replies and approvals in the current chat, and offers
+ * the Inbox scope pickers only in an empty window.
  */
 export function createEditorWindowSessionsViewOptions(options: IViewletViewOptions, scoped: IObservable<boolean>, header: EditorWindowSessionsHeader = 'title', inbox = false): IViewletViewOptions & ISessionsViewOptions {
 	const view: IViewletViewOptions & ISessionsViewOptions = { ...options, headerInTitle: header === 'title', showCustomizations: false, scoped, groupings: EDITOR_WINDOW_SESSIONS_GROUPINGS, quickChatsInTimeGrouping: true };
-	return inbox ? { ...view, groupings: CHAT_VIEW_SESSIONS_GROUPINGS, groupingStorageKeys: CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS, inboxAutoAdvance: false, leaveInboxWithoutChat: true } : view;
+	return inbox ? { ...view, groupings: CHAT_VIEW_SESSIONS_GROUPINGS, groupingStorageKeys: CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS, inboxAutoAdvance: false, leaveInboxWithoutChat: true, inboxScopeInEmptyWindowOnly: true } : view;
 }
 
 /** The Sessions view of an editor window, with {@link createEditorWindowSessionsViewOptions}. */

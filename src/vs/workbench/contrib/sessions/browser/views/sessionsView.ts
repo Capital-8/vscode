@@ -11,7 +11,7 @@ import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Iterable } from '../../../../../base/common/iterator.js';
 import { DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { getOrSet } from '../../../../../base/common/map.js';
-import { autorun, derived, derivedOpts, IObservable, IReader, observableSignalFromEvent, observableValue } from '../../../../../base/common/observable.js';
+import { autorun, constObservable, derived, derivedOpts, IObservable, IReader, observableFromEvent, observableSignalFromEvent, observableValue } from '../../../../../base/common/observable.js';
 import { structuralEquals } from '../../../../../base/common/equals.js';
 import { isWeb } from '../../../../../base/common/platform.js';
 import { getComparisonKey } from '../../../../../base/common/resources.js';
@@ -62,7 +62,7 @@ import { ISessionDraftsService } from '../sessionDraftsService.js';
 import { IScheduledChatsService } from '../scheduledChatsService.js';
 import { IChatScheduledRequest } from '../../../chat/common/model/chatViewModel.js';
 import { HiddenItemStrategy, MenuWorkbenchToolBar } from '../../../../../platform/actions/browser/toolbar.js';
-import { IWorkspaceContextService, WorkbenchMode } from '../../../../../platform/workspace/common/workspace.js';
+import { IWorkspaceContextService, WorkbenchMode, WorkbenchState } from '../../../../../platform/workspace/common/workspace.js';
 import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
 import { Menus, SessionsViewShowGroup } from '../menus.js';
 import { MobileSessionFilterChips } from '../mobile/mobileSessionFilterChips.js';
@@ -119,6 +119,16 @@ export function getCustomizationsPresentation(phoneLayout: boolean, aiEnabled: b
 	}
 	const resolved = resolveChatCustomizationsLocation(location, true, navigationIncludesCustomizations);
 	return resolved === 'sidebar' ? 'control' : resolved === 'sessionsHeader' ? 'treatment' : 'hidden';
+}
+
+/**
+ * Whether Inbox offers its workspace and environment scope: in every window, or, `inEmptyWindowOnly`, only while the window
+ * has no folder or workspace, following the window as it opens or closes one.
+ */
+export function getInboxScopeAvailability(owner: object, inEmptyWindowOnly: boolean, workspaceContextService: IWorkspaceContextService): IObservable<boolean> {
+	return inEmptyWindowOnly
+		? observableFromEvent(owner, workspaceContextService.onDidChangeWorkbenchState, () => workspaceContextService.getWorkbenchState() === WorkbenchState.EMPTY)
+		: constObservable(true);
 }
 
 /** The Toggle Inbox action, which the view's title shows. */
@@ -408,6 +418,12 @@ export interface ISessionsViewOptions extends IViewPaneOptions {
 	 * controls are hidden, nor come back stale; by default it stays in Inbox and only hides the controls until Chat is back.
 	 */
 	readonly leaveInboxWithoutChat?: boolean;
+
+	/**
+	 * Whether Inbox offers its workspace and environment pickers only in an empty window, without folders, such as the Chat view
+	 * of an editor window; elsewhere its scope neither shows nor narrows the list. By default, it offers them in every window.
+	 */
+	readonly inboxScopeInEmptyWindowOnly?: boolean;
 }
 
 export class SessionsView extends ViewPane {
@@ -455,6 +471,7 @@ export class SessionsView extends ViewPane {
 	private readonly groupingStorageKeys: ISessionsViewGroupingStorageKeys | undefined;
 	private readonly inboxAutoAdvance: boolean | undefined;
 	private readonly leaveInboxWithoutChat: boolean | undefined;
+	private readonly inboxScopeAvailable: IObservable<boolean>;
 	private readonly quickChatsInTimeGrouping: boolean;
 	private readonly scoped: IObservable<boolean> | undefined;
 
@@ -506,6 +523,7 @@ export class SessionsView extends ViewPane {
 		this.groupingStorageKeys = options.groupingStorageKeys;
 		this.inboxAutoAdvance = options.inboxAutoAdvance;
 		this.leaveInboxWithoutChat = options.leaveInboxWithoutChat;
+		this.inboxScopeAvailable = getInboxScopeAvailability(this, !!options.inboxScopeInEmptyWindowOnly, workspaceContextService);
 		this.quickChatsInTimeGrouping = !!options.quickChatsInTimeGrouping;
 		this.initializeGrouping();
 		// Registered once it knows its groupings, which whoever locates it asks about
@@ -695,10 +713,11 @@ export class SessionsView extends ViewPane {
 		const inboxScope = this._register(this.instantiationService.createInstance(SessionsInboxScope, inboxScopeContainer, sessionsControl.filters, scopeSessions,
 			derived(reader => scopeEnvironments.read(reader).environments),
 			derived(reader => scopeEnvironments.read(reader).localEnvironmentIds)));
+		this._register(autorun(reader => sessionsControl.filters.setInboxScopeApplies(this.inboxScopeAvailable.read(reader))));
 		this._register(autorun(reader => {
 			scopeChanged.read(reader);
 			const hidden = this.chatEntitlementService.sentimentObs.read(reader).hidden;
-			if (inboxScope.setVisible(this.grouping === SessionsGrouping.Inbox && !hidden && this.scopedContextKeyService.contextMatchesRules(ChatContextKeys.enabled))) {
+			if (inboxScope.setVisible(this.grouping === SessionsGrouping.Inbox && this.inboxScopeAvailable.read(reader) && !hidden && this.scopedContextKeyService.contextMatchesRules(ChatContextKeys.enabled))) {
 				sessionsControl.focus();
 			}
 		}));

@@ -324,6 +324,31 @@ suite('SessionsListFilters', () => {
 		assert.deepStrictEqual({ persisted, reset, undone: restored.isScheduledOnly() }, { persisted: true, reset: false, undone: true });
 	});
 
+	test('an Inbox scope that does not apply, as in a folder window\'s Chat view, narrows nothing and is kept for when it applies again', () => {
+		const storage = store.add(new InMemoryStorageService());
+		const filters = createFilters(storage);
+		const sessions = [
+			buildTestSession({ id: 'local', title: 'Local', workspace: 'app' }).session,
+			buildTestSession({ id: 'remote', title: 'Remote', workspace: 'app', environment: 'ssh:work' }).session,
+		];
+		const visible = () => ({ sessions: sessions.filter(session => filters.matchesInboxScope(session)).map(session => session.sessionId), hasScope: filters.hasInboxScope });
+		filters.setInboxEnvironment({ id: 'ssh:work', label: 'Work' });
+		const applies = visible();
+		let changes = 0;
+		store.add(filters.onDidChange(() => changes++));
+		filters.setInboxScopeApplies(false);
+		const notApplied = visible();
+		const persisted = createFilters(storage).inboxScope;
+		filters.setInboxScopeApplies(true);
+		assert.deepStrictEqual({ applies, notApplied, persisted, reapplied: visible(), changes }, {
+			applies: { sessions: ['remote'], hasScope: true },
+			notApplied: { sessions: ['local', 'remote'], hasScope: false },
+			persisted: { environment: { id: 'ssh:work', label: 'Work' } },
+			reapplied: { sessions: ['remote'], hasScope: true },
+			changes: 2,
+		});
+	});
+
 	test('Inbox scope distinguishes exact workspaces and environments without separating harnesses', () => {
 		const filters = createFilters();
 		const sessions = [

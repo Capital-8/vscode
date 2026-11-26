@@ -61,7 +61,7 @@ function getChatViewSessionsListAccessibilityHelpContent(inboxEnabled: boolean):
 		...inboxEnabled ? [
 			localize('chatViewSessionsList.inbox', "Run Toggle Inbox{0} to group the sessions by what they need from you, with those that need your attention first, followed by working, on hold and acknowledged sessions. Run it again to return to the grouping you had. The Chat view remembers its own Inbox Mode, apart from the Agents window. Replying to or approving a session keeps you in the current chat.", '<keybinding:sessionsViewPane.inboxMode>'),
 			localize('chatViewSessionsList.inboxToggle', "Toggle Inbox is also a toggle button in the Chat view's title, next to Filter. Press Tab from the title to reach it. Where the title can make room, it moves into More Actions when it does not fit; otherwise it stays next to Filter. Press Enter or Space to toggle it; it tells whether it is checked."),
-			localize('chatViewSessionsList.inboxScope', "In Inbox Mode, the workspace and environment pickers above the list narrow the sessions that it lists. Press Shift+Tab from the list to reach them, Enter or Space to open one, and Escape to close it."),
+			localize('chatViewSessionsList.inboxScope', "In Inbox Mode in a window without a folder or workspace, the workspace and environment pickers above the list narrow the sessions that it lists. Press Shift+Tab from the list to reach them, Enter or Space to open one, and Escape to close it."),
 		] : [],
 		localize('chatViewSessionsList.undo', "After you archive or delete sessions, a notice above the list offers Undo for 10 seconds. Focus it and open accessibility help{0} for how to use it.", '<keybinding:editor.action.accessibilityHelp>'),
 	].join('\n');

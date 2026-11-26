@@ -302,10 +302,12 @@ export class SessionsListFilters extends Disposable implements ISessionsListRese
 	private readonly excluded: Map<string, boolean>;
 	private readonly showAutomationRunsMigration = this._register(new MutableDisposable());
 	private _inboxScope: IInboxScope = {};
+	private _inboxScopeApplies = true;
 	private _worktree: string | undefined;
-	get inboxScope(): IInboxScope { return this._inboxScope; }
-	get hasInboxScope(): boolean { return this._inboxScope.workspace !== undefined || this._inboxScope.environment !== undefined; }
-	get hasInboxWorkspaceScope(): boolean { return !!this._inboxScope.workspace && this._inboxScope.workspace !== 'none'; }
+	/** The Inbox scope that narrows the list: none while it does not apply, which keeps the remembered one for when it does. */
+	get inboxScope(): IInboxScope { return this._inboxScopeApplies ? this._inboxScope : {}; }
+	get hasInboxScope(): boolean { return this.inboxScope.workspace !== undefined || this.inboxScope.environment !== undefined; }
+	get hasInboxWorkspaceScope(): boolean { return !!this.inboxScope.workspace && this.inboxScope.workspace !== 'none'; }
 	private readonly _onDidChange = this._register(new Emitter<void>());
 	readonly onDidChange = this._onDidChange.event;
 
@@ -449,8 +451,16 @@ export class SessionsListFilters extends Disposable implements ISessionsListRese
 		return resetWorkspace;
 	}
 
+	/** Whether the remembered Inbox scope narrows the list, such as only where the list shows its pickers. */
+	setInboxScopeApplies(applies: boolean): void {
+		if (this._inboxScopeApplies !== applies) {
+			this._inboxScopeApplies = applies;
+			this._onDidChange.fire();
+		}
+	}
+
 	matchesInboxScope(session: ISession): boolean {
-		const { environment, workspace } = this._inboxScope;
+		const { environment, workspace } = this.inboxScope;
 		if (environment && session.environment !== environment.id) {
 			return false;
 		}

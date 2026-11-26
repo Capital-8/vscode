@@ -5,13 +5,13 @@
 
 import assert from 'assert';
 import { toDisposable } from '../../../../../base/common/lifecycle.js';
-import { observableValue } from '../../../../../base/common/observable.js';
+import { autorun, observableValue } from '../../../../../base/common/observable.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 import { Registry } from '../../../../../platform/registry/common/platform.js';
 import { IViewletViewOptions } from '../../../../browser/parts/views/viewsViewlet.js';
 import { CHAT_VIEW_SESSIONS_GROUPINGS, createEditorWindowSessionsScope, createEditorWindowSessionsViewOptions, EDITOR_WINDOW_SESSIONS_GROUPINGS, EditorWindowSessionsList } from '../../browser/agentsView/editorWindowSessionsList.js';
-import { EditorWindowSessionsContext, EditorWindowSessionsViewOffersInboxContext, ISessionsViewLocator, SessionsView, SessionsViewId } from '../../browser/views/sessionsView.js';
+import { EditorWindowSessionsContext, EditorWindowSessionsViewOffersInboxContext, getInboxScopeAvailability, ISessionsViewLocator, SessionsView, SessionsViewId } from '../../browser/views/sessionsView.js';
 import { StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { SessionsGrouping } from '../../browser/views/sessionsListCommon.js';
@@ -20,7 +20,7 @@ import { TestConfigurationService } from '../../../../../platform/configuration/
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { upcastPartial } from '../../../../../base/test/common/mock.js';
 import { URI } from '../../../../../base/common/uri.js';
-import { IWorkspace, IWorkspaceContextService, IWorkspaceFolder } from '../../../../../platform/workspace/common/workspace.js';
+import { IWorkspace, IWorkspaceContextService, IWorkspaceFolder, WorkbenchState } from '../../../../../platform/workspace/common/workspace.js';
 import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../../platform/configuration/common/configurationRegistry.js';
 import { MockContextKeyService } from '../../../../../platform/keybinding/test/common/mockKeybindingService.js';
 import { TestInstantiationService } from '../../../../../platform/instantiation/test/common/instantiationServiceMock.js';
@@ -76,17 +76,33 @@ suite('EditorWindowSessionsList', () => {
 		const scoped = observableValue('scoped', true);
 		const describe = (inbox: boolean) => {
 			const options = createEditorWindowSessionsViewOptions({ id: SessionsViewId } as IViewletViewOptions, scoped, 'title', inbox);
-			return { groupings: options.groupings, groupingStorageKeys: options.groupingStorageKeys, inboxAutoAdvance: options.inboxAutoAdvance, leaveInboxWithoutChat: options.leaveInboxWithoutChat };
+			return { groupings: options.groupings, groupingStorageKeys: options.groupingStorageKeys, inboxAutoAdvance: options.inboxAutoAdvance, leaveInboxWithoutChat: options.leaveInboxWithoutChat, inboxScopeInEmptyWindowOnly: options.inboxScopeInEmptyWindowOnly };
 		};
 		assert.deepStrictEqual({ editorWindow: describe(false), chatView: describe(true) }, {
-			editorWindow: { groupings: EDITOR_WINDOW_SESSIONS_GROUPINGS, groupingStorageKeys: undefined, inboxAutoAdvance: undefined, leaveInboxWithoutChat: undefined },
+			editorWindow: { groupings: EDITOR_WINDOW_SESSIONS_GROUPINGS, groupingStorageKeys: undefined, inboxAutoAdvance: undefined, leaveInboxWithoutChat: undefined, inboxScopeInEmptyWindowOnly: undefined },
 			chatView: {
 				groupings: { offered: [SessionsGrouping.Date, SessionsGrouping.Environment, SessionsGrouping.Inbox], default: SessionsGrouping.Date },
 				groupingStorageKeys: { grouping: 'chatViewSessionsList.grouping', nonInboxGrouping: 'chatViewSessionsList.nonInboxGrouping', inboxScope: 'chatViewSessionsList.inboxScope', target: StorageTarget.MACHINE, fallbackGrouping: 'sessionsViewPane.grouping' },
 				inboxAutoAdvance: false,
 				leaveInboxWithoutChat: true,
+				inboxScopeInEmptyWindowOnly: true,
 			},
 		});
+	});
+
+	test('the Chat view\'s Inbox offers its workspace and environment scope only in an empty window, following the window as it opens or closes a folder, and the Agents window offers it always', () => {
+		const onDidChangeWorkbenchState = store.add(new Emitter<WorkbenchState>());
+		let state = WorkbenchState.FOLDER;
+		const workspaceContextService = upcastPartial<IWorkspaceContextService>({ onDidChangeWorkbenchState: onDidChangeWorkbenchState.event, getWorkbenchState: () => state });
+		const chatView = getInboxScopeAvailability({}, true, workspaceContextService);
+		const agentsWindow = getInboxScopeAvailability({}, false, workspaceContextService);
+		const seen: boolean[] = [];
+		store.add(autorun(reader => { seen.push(chatView.read(reader)); }));
+		for (const next of [WorkbenchState.EMPTY, WorkbenchState.WORKSPACE, WorkbenchState.EMPTY]) {
+			state = next;
+			onDidChangeWorkbenchState.fire(next);
+		}
+		assert.deepStrictEqual({ chatView: seen, agentsWindow: agentsWindow.get() }, { chatView: [false, true, false, true], agentsWindow: true });
 	});
 
 	test('only the header presentation differs between title and section', () => {
