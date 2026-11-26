@@ -504,15 +504,19 @@ export class SessionsListFilters extends Disposable implements ISessionsListRese
 		};
 	}
 
+	/** Clears the filters the list applies: an Inbox scope that does not apply stays remembered for where it does. */
 	reset(): void {
 		this.excluded.clear();
-		this._inboxScope = {};
+		if (this._inboxScopeApplies) {
+			this._inboxScope = {};
+		}
 		this._worktree = undefined;
 		this.save();
 	}
 
 	private save(): void {
-		if (this.hasInboxScope) {
+		// The remembered scope, also while it does not apply, so that saving other filters keeps it for where it does
+		if (this._inboxScope.workspace !== undefined || this._inboxScope.environment !== undefined) {
 			this.storageService.store(this.inboxScopeStorageKey, JSON.stringify(this._inboxScope), StorageScope.PROFILE, StorageTarget.MACHINE);
 		} else {
 			this.storageService.remove(this.inboxScopeStorageKey, StorageScope.PROFILE);

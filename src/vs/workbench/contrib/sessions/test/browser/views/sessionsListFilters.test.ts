@@ -338,6 +338,9 @@ suite('SessionsListFilters', () => {
 		store.add(filters.onDidChange(() => changes++));
 		filters.setInboxScopeApplies(false);
 		const notApplied = visible();
+		// Other filters the window changes, and resets, while the scope does not apply keep it for a window where it does
+		filters.setScheduledOnly(true);
+		filters.reset();
 		const persisted = createFilters(storage).inboxScope;
 		filters.setInboxScopeApplies(true);
 		assert.deepStrictEqual({ applies, notApplied, persisted, reapplied: visible(), changes }, {
@@ -345,7 +348,7 @@ suite('SessionsListFilters', () => {
 			notApplied: { sessions: ['local', 'remote'], hasScope: false },
 			persisted: { environment: { id: 'ssh:work', label: 'Work' } },
 			reapplied: { sessions: ['remote'], hasScope: true },
-			changes: 2,
+			changes: 4,
 		});
 	});
 
