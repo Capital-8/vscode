@@ -7,6 +7,7 @@ import { Disposable, DisposableStore, IDisposable, toDisposable } from '../../..
 import { derived, IObservable, observableFromEvent } from '../../../../../base/common/observable.js';
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IViewletViewOptions } from '../../../../browser/parts/views/viewsViewlet.js';
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
@@ -15,7 +16,7 @@ import { IViewsService } from '../../../../services/views/common/viewsService.js
 import { registerSessionsListConfiguration } from '../sessionsConfiguration.js';
 import { SessionsGrouping } from '../views/sessionsListCommon.js';
 import { registerSessionsListActions, registerSessionsListReadStateMenus, SessionsArchiveActionsContribution } from '../views/sessionsListActions.js';
-import { EditorWindowSessionsContext, ISessionsViewGroupingStorageKeys, ISessionsViewOptions, SessionsView } from '../views/sessionsView.js';
+import { EditorWindowSessionsContext, EditorWindowSessionsViewOffersInboxContext, ISessionsViewGroupingStorageKeys, ISessionsViewLocator, ISessionsViewOptions, SessionsView } from '../views/sessionsView.js';
 
 /** The editor window's Sessions view groups only by time or environment, by time until one is chosen. */
 export const EDITOR_WINDOW_SESSIONS_GROUPINGS = { offered: [SessionsGrouping.Date, SessionsGrouping.Environment], default: SessionsGrouping.Date };
@@ -31,6 +32,10 @@ export const CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS: ISessionsViewGroupingStor
 	grouping: 'chatViewSessionsList.grouping',
 	nonInboxGrouping: 'chatViewSessionsList.nonInboxGrouping',
 	inboxScope: 'chatViewSessionsList.inboxScope',
+	// Each window's choice stays on this machine, as its Inbox scope does
+	target: StorageTarget.MACHINE,
+	// The grouping the list stored before it had its own keys, which it shared with the Agents window
+	fallbackGrouping: 'sessionsViewPane.grouping',
 };
 
 /** The services of the Sessions view, which its constructor takes after its options. */
@@ -90,10 +95,16 @@ export class EditorWindowSessionsList extends Disposable {
 		@IViewsService private readonly viewsService: IViewsService,
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 		@ILifecycleService private readonly lifecycleService: ILifecycleService,
+		@ISessionsViewLocator sessionsViewLocator: ISessionsViewLocator,
 	) {
 		super();
 		EditorWindowSessionsContext.bindTo(this.contextKeyService).set(true);
 		this._register(toDisposable(() => EditorWindowSessionsContext.bindTo(this.contextKeyService).reset()));
+		const offersInbox = EditorWindowSessionsViewOffersInboxContext.bindTo(this.contextKeyService);
+		const updateOffersInbox = () => offersInbox.set(!!sessionsViewLocator.getEmbeddedView()?.offersGrouping(SessionsGrouping.Inbox));
+		updateOffersInbox();
+		this._register(sessionsViewLocator.onDidChange(updateOffersInbox));
+		this._register(toDisposable(() => offersInbox.reset()));
 		this._register(registerSessionsListConfiguration());
 		this._register(this.registerOnFirstShown(viewId, () => {
 			this._register(registerSessionsListActions());

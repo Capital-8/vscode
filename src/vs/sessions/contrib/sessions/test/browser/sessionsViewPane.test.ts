@@ -23,6 +23,7 @@ import { ISession, SessionStatus } from '../../../../../workbench/services/sessi
 import { ISessionComparison, SessionComparisonParticipantRole } from '../../../../../workbench/contrib/sessions/common/sessionComparison.js';
 import { AICustomizationShortcutsWidget } from '../../../../../workbench/contrib/sessions/browser/aiCustomizationShortcutsWidget.js';
 import { DEFAULT_SESSIONS_GROUPINGS, getCustomizationsPresentation, getStoredSessionsGrouping, ISessionsViewGroupingStorageKeys, SessionsView, SessionsViewGroupingContext } from '../../../../../workbench/contrib/sessions/browser/views/sessionsView.js';
+import { ChatContextKeys } from '../../../../../workbench/contrib/chat/common/actions/chatContextKeys.js';
 import { CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS, CHAT_VIEW_SESSIONS_GROUPINGS, EDITOR_WINDOW_SESSIONS_GROUPINGS } from '../../../../../workbench/contrib/sessions/browser/agentsView/editorWindowSessionsList.js';
 import { SessionsGrouping, SessionsSorting } from '../../../../../workbench/contrib/sessions/browser/views/sessionsListCommon.js';
 import { SESSIONS_LIST_INBOX_ENABLED_SETTING } from '../../../../../workbench/contrib/sessions/common/sessionConfig.js';
@@ -195,7 +196,11 @@ suite('Sessions - SessionsViewPane', () => {
 	) {
 		const sentimentChanged = disposables.add(new Emitter<void>());
 		const contextKeyService = disposables.add(new ContextKeyService(configurationService));
+		const chatEnabled = ChatContextKeys.enabled.bindTo(contextKeyService);
+		chatEnabled.set(true);
 		const host = {
+			scopedContextKeyService: contextKeyService,
+			chatEnabled,
 			currentGrouping: undefined as SessionsGrouping | undefined,
 			groupings,
 			groupingStorageKeys,
@@ -447,6 +452,44 @@ suite('Sessions - SessionsViewPane', () => {
 			aiHidden: SessionsGrouping.Environment,
 			reloaded: SessionsGrouping.Environment,
 		});
+	});
+
+	test('the Chat view stores its Inbox Mode on this machine, and starts from the grouping it shared with the Agents window, unless that is Inbox or one it does not offer', () => {
+		const configurationService = new TestConfigurationService({ [SESSIONS_LIST_INBOX_ENABLED_SETTING]: true });
+		disposables.add(configurationService.onDidChangeConfigurationEmitter);
+		const chat = (storageService: InMemoryStorageService) => createGroupingHost(configurationService, storageService, CHAT_VIEW_SESSIONS_GROUPINGS, false, CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS);
+		const seeded = [SessionsGrouping.Environment, SessionsGrouping.Inbox, SessionsGrouping.Repository].map(shared => {
+			const storageService = disposables.add(new InMemoryStorageService());
+			storageService.store('sessionsViewPane.grouping', shared, StorageScope.PROFILE, StorageTarget.USER);
+			return chat(storageService).grouping;
+		});
+		const storageService = disposables.add(new InMemoryStorageService());
+		const chatView = chat(storageService);
+		chatView.setGrouping(SessionsGrouping.Environment);
+		chatView.toggleInbox();
+		assert.deepStrictEqual({
+			seeded,
+			machine: storageService.keys(StorageScope.PROFILE, StorageTarget.MACHINE).sort(),
+			user: storageService.keys(StorageScope.PROFILE, StorageTarget.USER),
+		}, {
+			seeded: [SessionsGrouping.Environment, SessionsGrouping.Date, SessionsGrouping.Date],
+			machine: ['chatViewSessionsList.grouping', 'chatViewSessionsList.nonInboxGrouping'],
+			user: [],
+		});
+	});
+
+	test('without Chat, Inbox cannot be entered, but losing Chat, such as as the extension host restarts, does not leave it', () => {
+		const configurationService = new TestConfigurationService({ [SESSIONS_LIST_INBOX_ENABLED_SETTING]: true });
+		disposables.add(configurationService.onDidChangeConfigurationEmitter);
+		const host = createGroupingHost(configurationService, undefined, CHAT_VIEW_SESSIONS_GROUPINGS, false, CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS);
+		host.chatEnabled.set(false);
+		assert.throws(() => host.toggleInbox(), /Enable sessions\.list\.inboxEnabled and AI features/);
+		const blocked = host.grouping;
+		host.chatEnabled.set(true);
+		host.toggleInbox();
+		host.chatEnabled.set(false);
+		host.updateInboxAvailability();
+		assert.deepStrictEqual({ blocked, kept: host.grouping }, { blocked: SessionsGrouping.Date, kept: SessionsGrouping.Inbox });
 	});
 
 	for (const enabled of [false, true]) {

@@ -98,6 +98,7 @@ suite('Sessions - Sessions list tools', () => {
 			configurationService,
 			storageService,
 			chatEntitlementService: { sentiment: { hidden: false } },
+			scopedContextKeyService: { contextMatchesRules: () => true },
 			sessionsControl: list,
 			updateHeaderLayout: () => { },
 			setGrouping: SessionsView.prototype.setGrouping,

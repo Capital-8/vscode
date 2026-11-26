@@ -13,7 +13,8 @@ import { ContextKeyService } from '../../../../../platform/contextkey/browser/co
 import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
 import { ChatContextKeys } from '../../../chat/common/actions/chatContextKeys.js';
 import { ChatEntitlementContextKeys } from '../../../../services/chat/common/chatEntitlementService.js';
-import { bindSessionsViewGroupings, ChatViewSessionsListContext, SessionsView } from '../../browser/views/sessionsView.js';
+import { bindSessionsViewGroupings, ChatViewSessionsListContext, EditorWindowSessionsContext, EditorWindowSessionsViewOffersInboxContext, SessionsView } from '../../browser/views/sessionsView.js';
+import { IsSessionsWindowContext } from '../../../../common/contextkeys.js';
 import { CommandsRegistry } from '../../../../../platform/commands/common/commands.js';
 import { ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
@@ -81,17 +82,43 @@ suite('Chat view sessions list title actions', () => {
 		}
 	});
 
-	test('Toggle Inbox from the Command Palette toggles the list of the window: the Agents window\'s view where it is registered, else the one the Chat view embeds', () => {
+	test('Toggle Inbox from the Command Palette toggles the list of the window that offers Inbox: the Agents window\'s view, else the one the Chat view embeds, and an editor window offers it only once that list is there', () => {
 		const store = registerSessionsListActions();
 		try {
 			const toggled: string[] = [];
-			const view = (name: string) => upcastPartial<SessionsView>({ toggleInbox: () => { toggled.push(name); }, grouping: SessionsGrouping.Inbox });
-			const run = (registered: SessionsView | null) => CommandsRegistry.getCommand('sessionsViewPane.inboxMode')!.handler(upcastPartial<ServicesAccessor>({
-				get: <T>(id: unknown): T => (id === IViewsService ? { getViewWithId: () => registered } : { getEmbeddedView: () => view('chat') }) as T,
+			const view = (name: string, offersInbox: boolean) => upcastPartial<SessionsView>({
+				offersGrouping: grouping => offersInbox || grouping !== SessionsGrouping.Inbox,
+				toggleInbox: () => { toggled.push(name); return true; },
+				isInboxToggleFocused: () => false, isHeaderInTitle: false, grouping: SessionsGrouping.Inbox,
+			});
+			const run = (registered: SessionsView | null, embedded: SessionsView | undefined) => CommandsRegistry.getCommand('sessionsViewPane.inboxMode')!.handler(upcastPartial<ServicesAccessor>({
+				get: <T>(id: unknown): T => (id === IViewsService ? { getViewWithId: () => registered } : { getEmbeddedView: () => embedded }) as T,
 			}));
-			run(view('agents'));
-			run(null);
-			assert.deepStrictEqual(toggled, ['agents', 'chat']);
+			// The Agents window; an editor window, whose Agents view does not offer Inbox; and one whose Chat view has no list yet
+			run(view('agents', true), undefined);
+			run(view('editor agents', false), view('chat', true));
+			run(view('editor agents', false), undefined);
+
+			const precondition = MenuRegistry.getCommand('sessionsViewPane.inboxMode')?.precondition;
+			const enabled = (window: 'agents' | 'editor', chatListOffersInbox: boolean) => {
+				const contextKeyService = new ContextKeyService(new TestConfigurationService({ [SESSIONS_LIST_INBOX_ENABLED_SETTING]: true }));
+				try {
+					(window === 'agents' ? IsSessionsWindowContext : EditorWindowSessionsContext).bindTo(contextKeyService).set(true);
+					EditorWindowSessionsViewOffersInboxContext.bindTo(contextKeyService).set(chatListOffersInbox);
+					ChatContextKeys.enabled.bindTo(contextKeyService).set(true);
+					return contextKeyService.contextMatchesRules(precondition);
+				} finally {
+					contextKeyService.dispose();
+				}
+			};
+
+			assert.deepStrictEqual({
+				toggled,
+				enabled: { agents: enabled('agents', false), editorBeforeChatList: enabled('editor', false), editorWithChatList: enabled('editor', true) },
+			}, {
+				toggled: ['agents', 'chat'],
+				enabled: { agents: true, editorBeforeChatList: false, editorWithChatList: true },
+			});
 		} finally {
 			store.dispose();
 		}

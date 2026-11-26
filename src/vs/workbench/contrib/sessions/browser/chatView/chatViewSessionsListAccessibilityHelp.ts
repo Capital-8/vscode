@@ -59,8 +59,9 @@ function getChatViewSessionsListAccessibilityHelpContent(inboxEnabled: boolean):
 		localize('chatViewSessionsList.actions', "Press Shift+F10 or the Context Menu key to open the actions of the focused session, section, or group, such as Pin, Rename, Archive, and Mark as Read."),
 		localize('chatViewSessionsList.shortcuts', "Rename the focused session{0}. Mark it as read{1} or unread{2}.", `<keybinding:${RENAME_SESSION_COMMAND_ID}>`, `<keybinding:${SESSIONS_LIST_MARK_READ_COMMAND_ID}>`, `<keybinding:${SESSIONS_LIST_MARK_UNREAD_COMMAND_ID}>`),
 		...inboxEnabled ? [
-			localize('chatViewSessionsList.inbox', "Run Toggle Inbox{0} to list only the sessions that need your attention, and again to return to the grouping you had. The Chat view remembers its own Inbox Mode, apart from the Agents window. Replying to or approving a session keeps you in the current chat.", '<keybinding:sessionsViewPane.inboxMode>'),
-			localize('chatViewSessionsList.inboxScope', "In Inbox Mode, the workspace and environment pickers above the list narrow the sessions that it lists."),
+			localize('chatViewSessionsList.inbox', "Run Toggle Inbox{0} to group the sessions by what they need from you, with those that need your attention first, followed by working, on hold and acknowledged sessions. Run it again to return to the grouping you had. The Chat view remembers its own Inbox Mode, apart from the Agents window. Replying to or approving a session keeps you in the current chat.", '<keybinding:sessionsViewPane.inboxMode>'),
+			localize('chatViewSessionsList.inboxToggle', "Toggle Inbox is also a toggle button in the Chat view's title, next to Filter. Press Tab from the title to reach it, or use More Actions in the title when it does not fit. Press Enter or Space to toggle it; it tells whether it is checked."),
+			localize('chatViewSessionsList.inboxScope', "In Inbox Mode, the workspace and environment pickers above the list narrow the sessions that it lists. Press Shift+Tab from the list to reach them, Enter or Space to open one, and Escape to close it."),
 		] : [],
 		localize('chatViewSessionsList.undo', "After you archive or delete sessions, a notice above the list offers Undo for 10 seconds. Focus it and open accessibility help{0} for how to use it.", '<keybinding:editor.action.accessibilityHelp>'),
 	].join('\n');

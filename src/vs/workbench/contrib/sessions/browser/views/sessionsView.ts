@@ -8,6 +8,7 @@ import * as DOM from '../../../../../base/browser/dom.js';
 import { status } from '../../../../../base/browser/ui/aria/aria.js';
 import { onUnexpectedError } from '../../../../../base/common/errors.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
+import { Iterable } from '../../../../../base/common/iterator.js';
 import { DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { getOrSet } from '../../../../../base/common/map.js';
 import { autorun, derived, derivedOpts, IObservable, IReader, observableSignalFromEvent, observableValue } from '../../../../../base/common/observable.js';
@@ -44,8 +45,8 @@ import { ISessionsProvidersService } from '../sessionsProvidersService.js';
 import { getSessionFilterActionId, getSessionFilterEnvironments, getSessionFilterOptions, ISessionFilterOption, listsQuickChatsIn, sessionFilterKey, SessionsWorktreeOpener } from './sessionsListFilters.js';
 import { AICustomizationShortcutsWidget } from '../aiCustomizationShortcutsWidget.js';
 import { AgentHostShortcutsWidget } from '../agentHostShortcutsWidget.js';
-import { Action2, IMenuService, MenuRegistry, registerAction2, SubmenuItemAction } from '../../../../../platform/actions/common/actions.js';
-import { getFlatContextMenuActions, SubmenuEntryActionViewItem } from '../../../../../platform/actions/browser/menuEntryActionViewItem.js';
+import { Action2, IMenuService, MenuItemAction, MenuRegistry, registerAction2, SubmenuItemAction } from '../../../../../platform/actions/common/actions.js';
+import { getFlatContextMenuActions, MenuEntryActionViewItem, SubmenuEntryActionViewItem } from '../../../../../platform/actions/browser/menuEntryActionViewItem.js';
 import { IDropdownMenuActionViewItemOptions } from '../../../../../base/browser/ui/dropdown/dropdownActionViewItem.js';
 import { IActionViewItem } from '../../../../../base/browser/ui/actionbar/actionbar.js';
 import { IAction } from '../../../../../base/common/actions.js';
@@ -92,6 +93,13 @@ export interface ISessionsViewGroupingStorageKeys {
 	readonly grouping: string;
 	readonly nonInboxGrouping: string;
 	readonly inboxScope: string;
+	/** Where the grouping and the grouping Inbox returns to are stored, such as only on this machine; by default, for the user. */
+	readonly target?: StorageTarget;
+	/**
+	 * A key whose grouping the view starts with while it has not stored its own, such as the one it stored before it had its own
+	 * keys. Only a grouping other than Inbox is taken, and the key is only read.
+	 */
+	readonly fallbackGrouping?: string;
 }
 
 const DEFAULT_GROUPING_STORAGE_KEYS: Omit<ISessionsViewGroupingStorageKeys, 'inboxScope'> = {
@@ -113,11 +121,60 @@ export function getCustomizationsPresentation(phoneLayout: boolean, aiEnabled: b
 	return resolved === 'sidebar' ? 'control' : resolved === 'sessionsHeader' ? 'treatment' : 'hidden';
 }
 
+/** The Toggle Inbox action, which the view's title shows. */
+const INBOX_MODE_ACTION_ID = 'sessionsViewPane.inboxMode';
+
+/**
+ * Toggle Inbox in a host's title, such as the Chat view's. Toggling rebuilds the title's actions, which keeps the focus by
+ * position only: the toggle that had it gives it to the toggle that replaces it, wherever that one is.
+ */
+class InboxToggleActionViewItem extends MenuEntryActionViewItem {
+
+	focusHandOver: { pending: boolean } | undefined;
+	onDispose: (() => void) | undefined;
+
+	override render(container: HTMLElement): void {
+		super.render(container);
+		const handOver = this.focusHandOver;
+		if (!handOver?.pending) {
+			return;
+		}
+		handOver.pending = false;
+		queueMicrotask(() => {
+			const element = this.element;
+			const activeElement = DOM.getActiveElement();
+			const toolbar = element?.closest('.monaco-action-bar');
+			// Only where the focus was lost with the old toggle, not where it went since
+			if (element?.isConnected && (!DOM.isHTMLElement(activeElement) || activeElement === element.ownerDocument.body || !!toolbar?.contains(activeElement))) {
+				this.focus();
+			}
+		});
+	}
+
+	hasFocus(): boolean {
+		return !!this.element && DOM.isAncestorOfActiveElement(this.element);
+	}
+
+	override dispose(): void {
+		const handOver = this.focusHandOver;
+		if (handOver && this.hasFocus()) {
+			handOver.pending = true;
+			// The toggle that replaces it renders right away, if at all
+			queueMicrotask(() => handOver.pending = false);
+		}
+		this.onDispose?.();
+		super.dispose();
+	}
+}
+
 export const ISessionsViewLocator = createDecorator<ISessionsViewLocator>('sessionsViewLocator');
 
 /** Knows the Sessions views that a host, such as another view, embeds instead of registering them with {@link SessionsViewId}. */
 export interface ISessionsViewLocator {
 	readonly _serviceBrand: undefined;
+
+	/** Fires as an embedded Sessions view registers or goes. */
+	readonly onDidChange: Event<void>;
 
 	/** Registers an embedded Sessions view; the latest registered view is the active one. */
 	register(view: SessionsView): IDisposable;
@@ -131,12 +188,17 @@ export class SessionsViewLocator implements ISessionsViewLocator {
 
 	private readonly views: SessionsView[] = [];
 
+	private readonly _onDidChange = new Emitter<void>();
+	readonly onDidChange = this._onDidChange.event;
+
 	register(view: SessionsView): IDisposable {
 		this.views.push(view);
+		this._onDidChange.fire();
 		return toDisposable(() => {
 			const index = this.views.indexOf(view);
 			if (index >= 0) {
 				this.views.splice(index, 1);
+				this._onDidChange.fire();
 			}
 		});
 	}
@@ -170,8 +232,27 @@ export function getActiveSessionsView(accessor: ServicesAccessor): SessionsView 
 	return getSessionsViewResolver(accessor)();
 }
 
+/**
+ * The Sessions view that offers `grouping`: the view registered with its id, else the one that a host embeds. In an editor window,
+ * only the view the Chat view embeds offers Inbox, not the one of the Agents view.
+ */
+export function getSessionsViewOffering(accessor: ServicesAccessor, grouping: SessionsGrouping): SessionsView | undefined {
+	const view = accessor.get(IViewsService).getViewWithId<SessionsView>(SessionsViewId);
+	if (view?.offersGrouping(grouping)) {
+		return view;
+	}
+	const embedded = accessor.get(ISessionsViewLocator).getEmbeddedView();
+	return embedded?.offersGrouping(grouping) ? embedded : undefined;
+}
+
 /** Whether the window shows the Sessions view of an editor window, wherever it shows: in the Agents view or in the Chat view. */
 export const EditorWindowSessionsContext = new RawContextKey<boolean>('editorWindowSessions', false);
+
+/**
+ * Whether the editor window has a Sessions view that offers Inbox, such as the one the Chat view embeds: the window-wide state,
+ * as the Command Palette needs it wherever the focus is, which the view's own groupings do not tell outside the view.
+ */
+export const EditorWindowSessionsViewOffersInboxContext = new RawContextKey<boolean>('editorWindowSessionsViewOffersInbox', false);
 
 /** Whether the focus is inside a Sessions view: set on the view's own scope, so it holds wherever the view is embedded. */
 export const InSessionsViewContext = new RawContextKey<boolean>('inSessionsView', false);
@@ -349,6 +430,8 @@ export class SessionsView extends ViewPane {
 	private readonly _mainWindowHost: ISessionHost;
 
 	private readonly headerInTitle: boolean;
+	private readonly inboxToggles = new Set<InboxToggleActionViewItem>();
+	private readonly inboxToggleFocusHandOver = { pending: false };
 	private readonly hideCustomizations: boolean;
 	private readonly groupings: ISessionsViewOptions['groupings'];
 	private readonly groupingStorageKeys: ISessionsViewGroupingStorageKeys | undefined;
@@ -398,7 +481,6 @@ export class SessionsView extends ViewPane {
 		this.customizationsNavigationState = this._register(instantiationService.createInstance(CustomizationsNavigationState, this.customizationsNavigationVisible));
 		this.sessionsListRearrangeContext = SessionsListRearrangeContext.bindTo(this.scopedContextKeyService);
 		InSessionsViewContext.bindTo(this.scopedContextKeyService).set(true);
-		this._register(sessionsViewLocator.register(this));
 
 		// Restore persisted grouping
 		this.groupings = options.groupings;
@@ -406,6 +488,8 @@ export class SessionsView extends ViewPane {
 		this.inboxAutoAdvance = options.inboxAutoAdvance;
 		this.quickChatsInTimeGrouping = !!options.quickChatsInTimeGrouping;
 		this.initializeGrouping();
+		// Registered once it knows its groupings, which whoever locates it asks about
+		this._register(sessionsViewLocator.register(this));
 
 		// Restore persisted sorting
 		const storedSorting = this.storageService.get(SORTING_STORAGE_KEY, StorageScope.PROFILE);
@@ -594,7 +678,9 @@ export class SessionsView extends ViewPane {
 		this._register(autorun(reader => {
 			scopeChanged.read(reader);
 			const hidden = this.chatEntitlementService.sentimentObs.read(reader).hidden;
-			inboxScope.setVisible(this.grouping === SessionsGrouping.Inbox && !hidden && this.scopedContextKeyService.contextMatchesRules(ChatContextKeys.enabled));
+			if (inboxScope.setVisible(this.grouping === SessionsGrouping.Inbox && !hidden && this.scopedContextKeyService.contextMatchesRules(ChatContextKeys.enabled))) {
+				sessionsControl.focus();
+			}
 		}));
 		let scopeHeight = -1;
 		const scopeResizeObserver = this._register(new DOM.DisposableResizeObserver('SessionsView.inboxScope', entries => {
@@ -773,7 +859,24 @@ export class SessionsView extends ViewPane {
 		if (this.headerInTitle && action instanceof SubmenuItemAction && action.item.submenu === Menus.SessionsViewFilter) {
 			return this.instantiationService.createInstance(SessionsFilterActionViewItem, action, options, () => this.sessionsControl?.reportFilterMenuShown());
 		}
+		if (this.headerInTitle && action instanceof MenuItemAction && action.id === INBOX_MODE_ACTION_ID) {
+			const item = this.instantiationService.createInstance(InboxToggleActionViewItem, action, options);
+			item.focusHandOver = this.inboxToggleFocusHandOver;
+			this.inboxToggles.add(item);
+			item.onDispose = () => this.inboxToggles.delete(item);
+			return item;
+		}
 		return super.createActionViewItem(action, options);
+	}
+
+	/** Whether the focus is on Toggle Inbox in the host's title, which tells its checked state itself. */
+	isInboxToggleFocused(): boolean {
+		return Iterable.some(this.inboxToggles, item => item.hasFocus());
+	}
+
+	/** Whether the view's header is in the title of a host view, such as the Chat view. */
+	get isHeaderInTitle(): boolean {
+		return this.headerInTitle;
 	}
 
 	private createSessionsHeader(parent: HTMLElement, phoneLayout: boolean, disposables: DisposableStore): ISessionsHeaderElements {
@@ -1378,6 +1481,11 @@ export class SessionsView extends ViewPane {
 		return this.groupings?.offered ?? DEFAULT_SESSIONS_GROUPINGS;
 	}
 
+	/** Whether the view offers `grouping`, such as Inbox, which only some views do. */
+	offersGrouping(grouping: SessionsGrouping): boolean {
+		return this.offeredGroupings.includes(grouping);
+	}
+
 	private get nonInboxGrouping(): SessionsGrouping {
 		return getStoredSessionsGrouping(this.storageService.get((this.groupingStorageKeys ?? DEFAULT_GROUPING_STORAGE_KEYS).nonInboxGrouping, StorageScope.PROFILE),
 			this.offeredGroupings.filter(grouping => grouping !== SessionsGrouping.Inbox)) ?? this.groupings?.default ?? SessionsGrouping.Workspace;
@@ -1390,7 +1498,12 @@ export class SessionsView extends ViewPane {
 	}
 
 	private initializeGrouping(): void {
-		this.currentGrouping = getStoredSessionsGrouping(this.storageService.get((this.groupingStorageKeys ?? DEFAULT_GROUPING_STORAGE_KEYS).grouping, StorageScope.PROFILE), this.offeredGroupings);
+		const storageKeys = this.groupingStorageKeys ?? DEFAULT_GROUPING_STORAGE_KEYS;
+		this.currentGrouping = getStoredSessionsGrouping(this.storageService.get(storageKeys.grouping, StorageScope.PROFILE), this.offeredGroupings);
+		if (this.currentGrouping === undefined && this.groupingStorageKeys?.fallbackGrouping) {
+			this.currentGrouping = getStoredSessionsGrouping(this.storageService.get(this.groupingStorageKeys.fallbackGrouping, StorageScope.PROFILE),
+				this.offeredGroupings.filter(grouping => grouping !== SessionsGrouping.Inbox));
+		}
 		this.updateInboxAvailability();
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(SESSIONS_LIST_INBOX_ENABLED_SETTING) || e.affectsConfiguration('chat.disableAIFeatures')) {
@@ -1404,10 +1517,11 @@ export class SessionsView extends ViewPane {
 		if (this.inboxAvailable) {
 			return;
 		}
-		const activeElement = DOM.getActiveElement();
 		// Where the view's header is in the title of a host view, such as the Chat view, the toggle is in the host's title
-		const titleOwner = this.headerInTitle && this.element?.parentElement?.closest('.pane') || this.element;
-		const restoreFocus = DOM.isHTMLElement(activeElement) && activeElement.classList.contains('codicon-inbox') && !!titleOwner?.contains(activeElement);
+		const activeElement = DOM.getActiveElement();
+		const restoreFocus = this.headerInTitle
+			? this.isInboxToggleFocused()
+			: DOM.isHTMLElement(activeElement) && activeElement.classList.contains('codicon-inbox') && !!this.element?.contains(activeElement);
 		if (this.grouping === SessionsGrouping.Inbox) {
 			this.setGrouping(this.nonInboxGrouping);
 		}
@@ -1416,8 +1530,11 @@ export class SessionsView extends ViewPane {
 		}
 	}
 
-	toggleInbox(): void {
-		this.setGrouping(this.grouping === SessionsGrouping.Inbox ? this.nonInboxGrouping : SessionsGrouping.Inbox);
+	/** Toggles Inbox, and returns whether the grouping changed. */
+	toggleInbox(): boolean {
+		const grouping = this.grouping;
+		this.setGrouping(grouping === SessionsGrouping.Inbox ? this.nonInboxGrouping : SessionsGrouping.Inbox);
+		return this.grouping !== grouping;
 	}
 
 	get sorting(): SessionsSorting {
@@ -1432,7 +1549,9 @@ export class SessionsView extends ViewPane {
 		if (!this.offeredGroupings.includes(grouping)) {
 			return;
 		}
-		if (grouping === SessionsGrouping.Inbox && !this.inboxAvailable) {
+		// Entering also needs Chat, whose participant comes and goes, such as as the extension host restarts: losing it hides
+		// the Inbox controls until it is back, but does not leave Inbox, so that a restart does not drop the user's choice
+		if (grouping === SessionsGrouping.Inbox && (!this.inboxAvailable || !this.scopedContextKeyService.contextMatchesRules(ChatContextKeys.enabled))) {
 			throw new Error(localize('inboxUnavailable', "Enable {0} and AI features to use Inbox Mode.", SESSIONS_LIST_INBOX_ENABLED_SETTING));
 		}
 		if (this.currentGrouping === grouping) {
@@ -1441,11 +1560,12 @@ export class SessionsView extends ViewPane {
 
 		const preserveCollapseState = this.grouping === SessionsGrouping.Inbox || grouping === SessionsGrouping.Inbox;
 		const storageKeys = this.groupingStorageKeys ?? DEFAULT_GROUPING_STORAGE_KEYS;
+		const target = this.groupingStorageKeys?.target ?? StorageTarget.USER;
 		if (this.grouping !== SessionsGrouping.Inbox) {
-			this.storageService.store(storageKeys.nonInboxGrouping, this.grouping, StorageScope.PROFILE, StorageTarget.USER);
+			this.storageService.store(storageKeys.nonInboxGrouping, this.grouping, StorageScope.PROFILE, target);
 		}
 		this.currentGrouping = grouping;
-		this.storageService.store(storageKeys.grouping, this.currentGrouping, StorageScope.PROFILE, StorageTarget.USER);
+		this.storageService.store(storageKeys.grouping, this.currentGrouping, StorageScope.PROFILE, target);
 		this.groupingContextKey?.set(this.currentGrouping);
 		if (!preserveCollapseState) {
 			this.sessionsControl?.resetSectionCollapseState();

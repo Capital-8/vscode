@@ -5,7 +5,6 @@
 
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { status } from '../../../../../base/browser/ui/aria/aria.js';
-import { getActiveElement, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { toErrorMessage } from '../../../../../base/common/errorMessage.js';
 import { onUnexpectedError } from '../../../../../base/common/errors.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
@@ -41,7 +40,7 @@ import { ISessionsListModelService } from '../sessionsListModelService.js';
 import { ISessionsListUndoService } from '../sessionsListUndoService.js';
 import { IPinnedCanvasService, isPinnedCanvasOwnedBy } from '../pinnedCanvases.js';
 import { ISessionComparisonService } from '../../common/sessionComparison.js';
-import { ChatViewSessionsListTitleContext, IsWorkspaceGroupCappedContext, SessionsViewCompactContext, SessionsViewGroupingContext, SessionsViewSortingContext, sessionsViewOffersGrouping, EditorWindowSessionsContext, SessionsViewFocusedContext, getActiveSessionsView, ISessionsViewLocator, openSessionsView } from '../views/sessionsView.js';
+import { ChatViewSessionsListTitleContext, IsWorkspaceGroupCappedContext, SessionsViewCompactContext, SessionsViewGroupingContext, SessionsViewSortingContext, sessionsViewOffersGrouping, EditorWindowSessionsContext, EditorWindowSessionsViewOffersInboxContext, SessionsViewFocusedContext, getActiveSessionsView, getSessionsViewOffering, ISessionsViewLocator, openSessionsView } from '../views/sessionsView.js';
 import { Menus, SessionHeaderMenus, SessionsViewShowGroup } from '../menus.js';
 import { SESSIONS_LIST_MARK_READ_COMMAND_ID, SESSIONS_LIST_MARK_UNREAD_COMMAND_ID } from '../../../../common/chatSessionCommands.js';
 import { ISessionsNavigationService } from '../sessionsNavigationService.js';
@@ -1157,7 +1156,8 @@ function createSessionsListActions(): DisposableStore {
 				icon: Codicon.inbox,
 				category: SessionsCategories.Sessions,
 				f1: true,
-				precondition: ContextKeyExpr.and(ContextKeyExpr.or(IsSessionsWindowContext, EditorWindowSessionsContext), available),
+				// In an editor window, only while a view that offers Inbox is there, such as the Chat view's, not before it first shows
+				precondition: ContextKeyExpr.and(ContextKeyExpr.or(IsSessionsWindowContext, ContextKeyExpr.and(EditorWindowSessionsContext, EditorWindowSessionsViewOffersInboxContext)), available),
 				toggled: InboxModeContext,
 				menu: [
 					...[Menus.SidebarSessionsHeader, Menus.MobileSessionsListActions].map(id => ({
@@ -1168,15 +1168,14 @@ function createSessionsListActions(): DisposableStore {
 			});
 		}
 		run(accessor: ServicesAccessor): void {
-			const view = getActiveSessionsView(accessor);
+			const view = getSessionsViewOffering(accessor, SessionsGrouping.Inbox);
 			if (!view) {
 				return;
 			}
-			// The toggle tells its checked state itself; from the title overflow or the Command Palette, the change would be silent
-			const activeElement = getActiveElement();
-			const fromToggle = isHTMLElement(activeElement) && activeElement.classList.contains('codicon-inbox');
-			view.toggleInbox();
-			if (!fromToggle) {
+			// In a host's title, such as the Chat view's, the toggle tells its checked state itself; from the title's overflow or the
+			// Command Palette, the change would be silent. The Agents window's own header keeps telling it as it does.
+			const fromToggle = view.isInboxToggleFocused();
+			if (view.toggleInbox() && view.isHeaderInTitle && !fromToggle) {
 				status(view.grouping === SessionsGrouping.Inbox ? localize('inboxModeOn', "Inbox Mode on.") : localize('inboxModeOff', "Inbox Mode off."));
 			}
 		}

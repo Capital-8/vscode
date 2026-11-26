@@ -135,7 +135,7 @@ suite('ChatViewSessionsGate', () => {
 		viewVisibility = disposables.add(new Emitter<{ id: string; visible: boolean }>());
 		instantiationService.stub(IViewsService, upcastPartial<IViewsService>({ onDidChangeViewVisibility: viewVisibility.event, isViewVisible: () => false }));
 		instantiationService.stub(IWorkbenchEnvironmentService, upcastPartial<IWorkbenchEnvironmentService>({ remoteAuthority }));
-		instantiationService.stub(ISessionsViewLocator, upcastPartial<ISessionsViewLocator>({ getEmbeddedView: () => undefined }));
+		instantiationService.stub(ISessionsViewLocator, upcastPartial<ISessionsViewLocator>({ onDidChange: Event.None, getEmbeddedView: () => undefined }));
 		instantiationService.stub(IChatViewSessionsListService, new ChatViewSessionsListService(configurationService, upcastPartial<IWorkbenchEnvironmentService>({ remoteAuthority, isSessionsWindow: false })));
 		contextKeyService = new MockContextKeyService();
 		instantiationService.stub(IContextKeyService, contextKeyService);
@@ -298,7 +298,7 @@ suite('ChatViewSessionsGate', () => {
 		const focused: string[] = [];
 		const instantiationService = disposables.add(new TestInstantiationService());
 		instantiationService.stub(IViewsService, upcastPartial<IViewsService>({ getViewWithId: () => null }));
-		instantiationService.stub(ISessionsViewLocator, upcastPartial<ISessionsViewLocator>({ getEmbeddedView: () => upcastPartial<SessionsView>({ focus: () => { focused.push('list'); } }) }));
+		instantiationService.stub(ISessionsViewLocator, upcastPartial<ISessionsViewLocator>({ onDidChange: Event.None, getEmbeddedView: () => upcastPartial<SessionsView>({ focus: () => { focused.push('list'); } }) }));
 		const configurationService = new TestConfigurationService();
 		instantiationService.stub(IConfigurationService, configurationService);
 		const help = instantiationService.createInstance(ChatViewSessionsListAccessibilityHelp);
