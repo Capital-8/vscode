@@ -412,7 +412,7 @@ suite('ChatViewSessionsGate', () => {
 		assert.deepStrictEqual({ otherWindowStartsOff, workspaceTurnsOff, userTurnsOff }, { otherWindowStartsOff: SessionsGrouping.Inbox, workspaceTurnsOff: SessionsGrouping.Inbox, userTurnsOff: SessionsGrouping.Environment });
 	});
 
-	test('windows of one profile whose workspaces alone turn the list on keep the Chat view\'s stored Inbox when one workspace turns it off, until the user setting turns off', () => {
+	test('windows of one profile whose workspaces alone turn the list on keep the Chat view\'s stored Inbox when one workspace turns it off, until the user setting turns off, also where a workspace keeps the list on', () => {
 		const storageService = disposables.add(new TestStorageService());
 		const keys = CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS;
 		const stored = () => storageService.get(keys.grouping, StorageScope.PROFILE);
@@ -432,13 +432,8 @@ suite('ChatViewSessionsGate', () => {
 		change(ChatConfiguration.ChatViewSessionsListEnabled, true);
 		change(ChatConfiguration.ChatViewSessionsListEnabled, false);
 		const userTurnsOffWhileWorkspaceKeepsIt = stored();
-		// The user setting turns on, then off, without the workspace override
-		configurationService.workspaceValues.clear();
-		change(ChatConfiguration.ChatViewSessionsListEnabled, true);
-		change(ChatConfiguration.ChatViewSessionsListEnabled, false);
-		const userTurnsOff = stored();
 
-		assert.deepStrictEqual({ workspaceTurnsOff, userTurnsOffWhileWorkspaceKeepsIt, userTurnsOff }, { workspaceTurnsOff: SessionsGrouping.Inbox, userTurnsOffWhileWorkspaceKeepsIt: SessionsGrouping.Inbox, userTurnsOff: SessionsGrouping.Environment });
+		assert.deepStrictEqual({ workspaceTurnsOff, userTurnsOffWhileWorkspaceKeepsIt }, { workspaceTurnsOff: SessionsGrouping.Inbox, userTurnsOffWhileWorkspaceKeepsIt: SessionsGrouping.Environment });
 	});
 
 	test('the Chat view shows only its sessions while a host, such as the chat part, replaces it, but a chat that the host leaves to it', () => {

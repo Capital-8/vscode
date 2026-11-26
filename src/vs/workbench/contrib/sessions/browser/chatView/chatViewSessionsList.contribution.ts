@@ -97,8 +97,8 @@ export class ChatViewSessionsGate extends Disposable implements IWorkbenchContri
 		}));
 
 		// The old list has no Inbox: turning the list back on starts out of it. The stored Inbox belongs to the profile, so only
-		// the user setting turning off leaves it, not a workspace turning the list off or a window starting with it off. A window
-		// whose workspace keeps the list on leaves it to the windows that the user setting turns off.
+		// the user setting turning off leaves it, whatever this window's workspace overrides; not a workspace turning the list
+		// off, nor a window starting with it off. A window that still shows the list keeps its Inbox until it reopens.
 		const userEnabled = () => configurationService.inspect<boolean>(ChatConfiguration.ChatViewSessionsListEnabled).userValue === true;
 		let wasUserEnabled = userEnabled();
 		this._register(configurationService.onDidChangeConfiguration(e => {
@@ -106,7 +106,7 @@ export class ChatViewSessionsGate extends Disposable implements IWorkbenchContri
 				return;
 			}
 			const isUserEnabled = userEnabled();
-			if (wasUserEnabled && !isUserEnabled && configurationService.getValue<boolean>(ChatConfiguration.ChatViewSessionsListEnabled) !== true) {
+			if (wasUserEnabled && !isUserEnabled) {
 				leaveStoredInbox(storageService, CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS, CHAT_VIEW_SESSIONS_GROUPINGS);
 			}
 			wasUserEnabled = isUserEnabled;
