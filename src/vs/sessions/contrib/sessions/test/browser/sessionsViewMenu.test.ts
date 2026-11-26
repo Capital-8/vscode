@@ -676,6 +676,7 @@ suite('Sessions - View Menu', () => {
 				setGrouping: SessionsView.prototype.setGrouping,
 				toggleInbox: SessionsView.prototype.toggleInbox,
 				updateInboxAvailability: Reflect.get(SessionsView.prototype, 'updateInboxAvailability') as () => void,
+				leaveInbox: Reflect.get(SessionsView.prototype, 'leaveInbox') as () => void,
 				updateHeaderLayout: () => { },
 			};
 			grouping.set(view.grouping);

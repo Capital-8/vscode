@@ -56,7 +56,7 @@ export type EditorWindowSessionsHeader = 'title' | 'section';
  */
 export function createEditorWindowSessionsViewOptions(options: IViewletViewOptions, scoped: IObservable<boolean>, header: EditorWindowSessionsHeader = 'title', inbox = false): IViewletViewOptions & ISessionsViewOptions {
 	const view: IViewletViewOptions & ISessionsViewOptions = { ...options, headerInTitle: header === 'title', showCustomizations: false, scoped, groupings: EDITOR_WINDOW_SESSIONS_GROUPINGS, quickChatsInTimeGrouping: true };
-	return inbox ? { ...view, groupings: CHAT_VIEW_SESSIONS_GROUPINGS, groupingStorageKeys: CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS, inboxAutoAdvance: false } : view;
+	return inbox ? { ...view, groupings: CHAT_VIEW_SESSIONS_GROUPINGS, groupingStorageKeys: CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS, inboxAutoAdvance: false, leaveInboxWithoutChat: true } : view;
 }
 
 /** The Sessions view of an editor window, with {@link createEditorWindowSessionsViewOptions}. */

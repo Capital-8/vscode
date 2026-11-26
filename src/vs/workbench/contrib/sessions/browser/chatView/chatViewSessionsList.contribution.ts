@@ -17,6 +17,7 @@ import { ContextKeyExpr, IContextKeyService, RawContextKey } from '../../../../.
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { Registry } from '../../../../../platform/registry/common/platform.js';
 import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
+import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { IWorkbenchEnvironmentService } from '../../../../services/environment/common/environmentService.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
@@ -30,8 +31,8 @@ import { ISessionsManagementService } from '../../common/sessionsManagement.js';
 import { registerAgentsViewNewSessionActions } from '../agentsView/agentsChatPartActions.js';
 import { ChatViewSessionsListProvider } from '../agentsView/chatViewSessionsList.js';
 import { IEditorWindowShownChatService } from '../agentsView/editorWindowMainSessionHost.js';
-import { EditorWindowSessionsList } from '../agentsView/editorWindowSessionsList.js';
-import { ChatViewSessionsListContext, ChatViewSessionsListTitleContext } from '../views/sessionsView.js';
+import { CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS, CHAT_VIEW_SESSIONS_GROUPINGS, EditorWindowSessionsList } from '../agentsView/editorWindowSessionsList.js';
+import { ChatViewSessionsListContext, ChatViewSessionsListTitleContext, leaveStoredInbox } from '../views/sessionsView.js';
 import { registerSessionsListAccessibilityHelp } from '../views/sessionsListActions.js';
 import { ChatViewSessionsListAccessibilityHelp } from './chatViewSessionsListAccessibilityHelp.js';
 import { AccessibleViewRegistry } from '../../../../../platform/accessibility/browser/accessibleViewRegistry.js';
@@ -73,6 +74,7 @@ export class ChatViewSessionsGate extends Disposable implements IWorkbenchContri
 		@IInstantiationService instantiationService: IInstantiationService,
 		@IWorkbenchEnvironmentService environmentService: IWorkbenchEnvironmentService,
 		@IChatViewSessionsListService chatViewSessionsListService: IChatViewSessionsListService,
+		@IStorageService storageService: IStorageService,
 	) {
 		super();
 
@@ -91,6 +93,9 @@ export class ChatViewSessionsGate extends Disposable implements IWorkbenchContri
 		this._register(autorun(reader => {
 			if (enabled.read(reader)) {
 				reader.store.add(instantiationService.createInstance(ChatViewSessionsListFeature));
+			} else {
+				// The old list has no Inbox: turning the list back on starts out of it
+				leaveStoredInbox(storageService, CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS, CHAT_VIEW_SESSIONS_GROUPINGS);
 			}
 		}));
 	}

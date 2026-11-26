@@ -76,14 +76,15 @@ suite('EditorWindowSessionsList', () => {
 		const scoped = observableValue('scoped', true);
 		const describe = (inbox: boolean) => {
 			const options = createEditorWindowSessionsViewOptions({ id: SessionsViewId } as IViewletViewOptions, scoped, 'title', inbox);
-			return { groupings: options.groupings, groupingStorageKeys: options.groupingStorageKeys, inboxAutoAdvance: options.inboxAutoAdvance };
+			return { groupings: options.groupings, groupingStorageKeys: options.groupingStorageKeys, inboxAutoAdvance: options.inboxAutoAdvance, leaveInboxWithoutChat: options.leaveInboxWithoutChat };
 		};
 		assert.deepStrictEqual({ editorWindow: describe(false), chatView: describe(true) }, {
-			editorWindow: { groupings: EDITOR_WINDOW_SESSIONS_GROUPINGS, groupingStorageKeys: undefined, inboxAutoAdvance: undefined },
+			editorWindow: { groupings: EDITOR_WINDOW_SESSIONS_GROUPINGS, groupingStorageKeys: undefined, inboxAutoAdvance: undefined, leaveInboxWithoutChat: undefined },
 			chatView: {
 				groupings: { offered: [SessionsGrouping.Date, SessionsGrouping.Environment, SessionsGrouping.Inbox], default: SessionsGrouping.Date },
 				groupingStorageKeys: { grouping: 'chatViewSessionsList.grouping', nonInboxGrouping: 'chatViewSessionsList.nonInboxGrouping', inboxScope: 'chatViewSessionsList.inboxScope', target: StorageTarget.MACHINE, fallbackGrouping: 'sessionsViewPane.grouping' },
 				inboxAutoAdvance: false,
+				leaveInboxWithoutChat: true,
 			},
 		});
 	});

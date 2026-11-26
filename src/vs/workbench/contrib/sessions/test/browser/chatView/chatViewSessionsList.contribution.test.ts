@@ -42,7 +42,7 @@ import { ChatConfiguration, getDefaultNewChatSessionTypeAndReason, OPEN_AGENTS_W
 import { IChatSessionsService, localChatSessionType, SessionType } from '../../../../chat/common/chatSessionsService.js';
 import { MockChatSessionsService } from '../../../../chat/test/common/mockChatSessionsService.js';
 import { TestContextService, TestStorageService } from '../../../../../test/common/workbenchTestServices.js';
-import { IStorageService } from '../../../../../../platform/storage/common/storage.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../../../platform/storage/common/storage.js';
 import { IAgentHostEnablementService } from '../../../../../../platform/agentHost/common/agentHostEnablementService.js';
 import { IManagedSettingsService, NullManagedSettingsService } from '../../../../../../platform/policy/common/copilotManagedSettings.js';
 import { ChatViewSessionsListService, IChatViewSessionsListService } from '../../../../chat/common/chatViewSessionsListService.js';
@@ -51,13 +51,14 @@ import { ILocalChatAvailabilityService, LocalChatAvailabilityService } from '../
 import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../../../platform/configuration/common/configurationRegistry.js';
 import { Menus } from '../../../browser/menus.js';
 import { SessionsList } from '../../../browser/views/sessionsList.js';
-import { SessionGroupToolbarMenuId, SessionItemContextMenuId, SessionSectionToolbarMenuId } from '../../../browser/views/sessionsListCommon.js';
+import { SessionGroupToolbarMenuId, SessionItemContextMenuId, SessionSectionToolbarMenuId, SessionsGrouping } from '../../../browser/views/sessionsListCommon.js';
 import { ISessionChange, ISessionsManagementService } from '../../../common/sessionsManagement.js';
 import { EditorWindowSessionsPresenterService, IEditorWindowSessionsPresenter, IEditorWindowSessionsPresenterService } from '../../../browser/editorWindow/editorWindowSessionsPresenter.js';
 import { EditorWindowSessionsService } from '../../../browser/agentsView/editorWindowSessionsService.js';
 import { ISessionsProvidersService } from '../../../browser/sessionsProvidersService.js';
 import { ChatViewSessionsListProvider } from '../../../browser/agentsView/chatViewSessionsList.js';
 import { InSessionsViewContext, ISessionsViewLocator, SessionsView, SessionsViewId } from '../../../browser/views/sessionsView.js';
+import { CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS } from '../../../browser/agentsView/editorWindowSessionsList.js';
 import { AccessibleViewRegistry } from '../../../../../../platform/accessibility/browser/accessibleViewRegistry.js';
 import { FocusedViewContext, IsSessionsWindowContext } from '../../../../../common/contextkeys.js';
 import { SessionsListNotificationFocused } from '../../../browser/views/sessionsListNotification.js';
@@ -163,6 +164,7 @@ suite('ChatViewSessionsGate', () => {
 		instantiationService.stub(IUriIdentityService, upcastPartial<IUriIdentityService>({ extUri }));
 		instantiationService.stub(IWorkbenchLayoutService, upcastPartial<IWorkbenchLayoutService>({ onDidChangePartVisibility: Event.None, isVisible: () => false }));
 		instantiationService.stub(ILifecycleService, upcastPartial<ILifecycleService>({ when: () => Promise.resolve() }));
+		instantiationService.stub(IStorageService, disposables.add(new TestStorageService()));
 		stub?.(instantiationService);
 		return disposables.add(instantiationService.createInstance(ChatViewSessionsGate));
 	}
@@ -206,7 +208,7 @@ suite('ChatViewSessionsGate', () => {
 				return new ChatViewSessionsListAccessibilityHelp(upcastPartial<IViewsService>({}), upcastPartial<ISessionsViewLocator>({}), new TestConfigurationService());
 			}) as IInstantiationService['createInstance'],
 		});
-		disposables.add(new ChatViewSessionsGate(configurationService, instantiationService, environmentService, new ChatViewSessionsListService(configurationService, environmentService)));
+		disposables.add(new ChatViewSessionsGate(configurationService, instantiationService, environmentService, new ChatViewSessionsListService(configurationService, environmentService), disposables.add(new TestStorageService())));
 
 		assert.deepStrictEqual({ ...registered(), reads, created }, { ...before, reads: [ChatConfiguration.ChatViewSessionsListEnabled], created: ['ChatViewSessionsListAccessibilityHelp'] });
 	});
@@ -349,6 +351,21 @@ suite('ChatViewSessionsGate', () => {
 		const onState = { ...before, providers: 1, runtimeHolds: 1, sessionsOnlyKey: false };
 		// The context key, never set before it first turns on, is reset to its default as it turns off
 		assert.deepStrictEqual({ off, on, offAgain, onAgain }, { off: { ...offState, sessionsOnlyKey: undefined }, on: onState, offAgain: { ...offState, sessionsOnlyKey: false }, onAgain: onState });
+	});
+
+	test('a Chat view list left in Inbox starts out of it, at the grouping Inbox returns to, once the list turns off, and the Agents window keeps its Inbox', () => {
+		const storageService = disposables.add(new TestStorageService());
+		const keys = CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS;
+		const stored = () => ({ chat: storageService.get(keys.grouping, StorageScope.PROFILE), agents: storageService.get('sessionsViewPane.grouping', StorageScope.PROFILE) });
+		storageService.store(keys.grouping, SessionsGrouping.Inbox, StorageScope.PROFILE, StorageTarget.MACHINE);
+		storageService.store(keys.nonInboxGrouping, SessionsGrouping.Environment, StorageScope.PROFILE, StorageTarget.MACHINE);
+		storageService.store('sessionsViewPane.grouping', SessionsGrouping.Inbox, StorageScope.PROFILE, StorageTarget.USER);
+		createGate(true, undefined, undefined, service => service.stub(IStorageService, storageService));
+		const on = stored();
+		change(ChatConfiguration.ChatViewSessionsListEnabled, false);
+		const off = stored();
+
+		assert.deepStrictEqual({ on, off }, { on: { chat: SessionsGrouping.Inbox, agents: SessionsGrouping.Inbox }, off: { chat: SessionsGrouping.Environment, agents: SessionsGrouping.Inbox } });
 	});
 
 	test('the Chat view shows only its sessions while a host, such as the chat part, replaces it, but a chat that the host leaves to it', () => {

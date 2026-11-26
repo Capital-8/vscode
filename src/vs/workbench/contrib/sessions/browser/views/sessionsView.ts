@@ -298,6 +298,18 @@ export function getStoredSessionsGrouping(stored: string | undefined, groupings:
 	return groupings.find(grouping => grouping === stored);
 }
 
+/**
+ * Leaves Inbox in what a view stored under `keys`, for the grouping Inbox returns to, while the view is not there to leave it
+ * itself, such as while its host does not show it, so that it does not come back in Inbox.
+ */
+export function leaveStoredInbox(storageService: IStorageService, keys: ISessionsViewGroupingStorageKeys, groupings: { readonly offered: readonly SessionsGrouping[]; readonly default: SessionsGrouping }): void {
+	if (storageService.get(keys.grouping, StorageScope.PROFILE) !== SessionsGrouping.Inbox) {
+		return;
+	}
+	const grouping = getStoredSessionsGrouping(storageService.get(keys.nonInboxGrouping, StorageScope.PROFILE), groupings.offered.filter(grouping => grouping !== SessionsGrouping.Inbox)) ?? groupings.default;
+	storageService.store(keys.grouping, grouping, StorageScope.PROFILE, keys.target ?? StorageTarget.USER);
+}
+
 export interface ISessionsHeaderElements {
 	readonly row: HTMLElement;
 	readonly label: HTMLElement;
@@ -390,6 +402,12 @@ export interface ISessionsViewOptions extends IViewPaneOptions {
 
 	/** Whether Inbox opens the next session that needs input after a reply or approval; it does by default. */
 	readonly inboxAutoAdvance?: boolean;
+
+	/**
+	 * Whether the view leaves Inbox as Chat becomes unavailable, as its participant goes, so that Inbox does not stay on while its
+	 * controls are hidden, nor come back stale; by default it stays in Inbox and only hides the controls until Chat is back.
+	 */
+	readonly leaveInboxWithoutChat?: boolean;
 }
 
 export class SessionsView extends ViewPane {
@@ -436,6 +454,7 @@ export class SessionsView extends ViewPane {
 	private readonly groupings: ISessionsViewOptions['groupings'];
 	private readonly groupingStorageKeys: ISessionsViewGroupingStorageKeys | undefined;
 	private readonly inboxAutoAdvance: boolean | undefined;
+	private readonly leaveInboxWithoutChat: boolean | undefined;
 	private readonly quickChatsInTimeGrouping: boolean;
 	private readonly scoped: IObservable<boolean> | undefined;
 
@@ -486,6 +505,7 @@ export class SessionsView extends ViewPane {
 		this.groupings = options.groupings;
 		this.groupingStorageKeys = options.groupingStorageKeys;
 		this.inboxAutoAdvance = options.inboxAutoAdvance;
+		this.leaveInboxWithoutChat = options.leaveInboxWithoutChat;
 		this.quickChatsInTimeGrouping = !!options.quickChatsInTimeGrouping;
 		this.initializeGrouping();
 		// Registered once it knows its groupings, which whoever locates it asks about
@@ -1511,12 +1531,32 @@ export class SessionsView extends ViewPane {
 			}
 		}));
 		this._register(this.chatEntitlementService.onDidChangeSentiment(() => this.updateInboxAvailability()));
+		if (this.leaveInboxWithoutChat) {
+			// Only as Chat goes: while the window starts, Chat is unavailable until its participant activates, and the view keeps
+			// the Inbox it restored
+			const chatEnabledKeys = new Set([ChatContextKeys.enabled.key]);
+			let chatEnabled = this.scopedContextKeyService.contextMatchesRules(ChatContextKeys.enabled);
+			this._register(this.scopedContextKeyService.onDidChangeContext(e => {
+				if (!e.affectsSome(chatEnabledKeys)) {
+					return;
+				}
+				const enabled = this.scopedContextKeyService.contextMatchesRules(ChatContextKeys.enabled);
+				if (chatEnabled && !enabled) {
+					this.leaveInbox();
+				}
+				chatEnabled = enabled;
+			}));
+		}
 	}
 
 	private updateInboxAvailability(): void {
-		if (this.inboxAvailable) {
-			return;
+		if (!this.inboxAvailable) {
+			this.leaveInbox();
 		}
+	}
+
+	/** Leaves Inbox for the grouping it returns to, keeping the focus in the view if it was on the Inbox toggle. */
+	private leaveInbox(): void {
 		// Where the view's header is in the title of a host view, such as the Chat view, the toggle is in the host's title
 		const activeElement = DOM.getActiveElement();
 		const restoreFocus = this.headerInTitle
@@ -1550,7 +1590,7 @@ export class SessionsView extends ViewPane {
 			return;
 		}
 		// Entering also needs Chat, whose participant comes and goes, such as as the extension host restarts: losing it hides
-		// the Inbox controls until it is back, but does not leave Inbox, so that a restart does not drop the user's choice
+		// the Inbox controls until it is back, and leaves Inbox where the view asks to ({@link ISessionsViewOptions.leaveInboxWithoutChat})
 		if (grouping === SessionsGrouping.Inbox && (!this.inboxAvailable || !this.scopedContextKeyService.contextMatchesRules(ChatContextKeys.enabled))) {
 			throw new Error(localize('inboxUnavailable', "Enable {0} and AI features to use Inbox Mode.", SESSIONS_LIST_INBOX_ENABLED_SETTING));
 		}

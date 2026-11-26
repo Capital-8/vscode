@@ -193,17 +193,20 @@ suite('Sessions - SessionsViewPane', () => {
 		groupings?: { readonly offered: readonly SessionsGrouping[]; readonly default: SessionsGrouping },
 		hidden = false,
 		groupingStorageKeys?: ISessionsViewGroupingStorageKeys,
+		leaveInboxWithoutChat = false,
+		chatEnabledAtStart = true,
 	) {
 		const sentimentChanged = disposables.add(new Emitter<void>());
 		const contextKeyService = disposables.add(new ContextKeyService(configurationService));
 		const chatEnabled = ChatContextKeys.enabled.bindTo(contextKeyService);
-		chatEnabled.set(true);
+		chatEnabled.set(chatEnabledAtStart);
 		const host = {
 			scopedContextKeyService: contextKeyService,
 			chatEnabled,
 			currentGrouping: undefined as SessionsGrouping | undefined,
 			groupings,
 			groupingStorageKeys,
+			leaveInboxWithoutChat,
 			configurationService,
 			storageService,
 			chatEntitlementService: { sentiment: { hidden }, onDidChangeSentiment: sentimentChanged.event },
@@ -216,6 +219,7 @@ suite('Sessions - SessionsViewPane', () => {
 			get inboxAvailable(): boolean { return Reflect.get(SessionsView.prototype, 'inboxAvailable', this); },
 			initializeGrouping: Reflect.get(SessionsView.prototype, 'initializeGrouping') as () => void,
 			updateInboxAvailability: Reflect.get(SessionsView.prototype, 'updateInboxAvailability') as () => void,
+			leaveInbox: Reflect.get(SessionsView.prototype, 'leaveInbox') as () => void,
 			setGrouping: SessionsView.prototype.setGrouping,
 			toggleInbox: SessionsView.prototype.toggleInbox,
 			updateHeaderLayout: () => { },
@@ -450,6 +454,29 @@ suite('Sessions - SessionsViewPane', () => {
 		assert.deepStrictEqual({ settingOff, aiHidden: chatView.grouping, reloaded: createGroupingHost(configurationService, storageService, CHAT_VIEW_SESSIONS_GROUPINGS, false, CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS).grouping }, {
 			settingOff: { chat: SessionsGrouping.Environment, agentsSaved: SessionsGrouping.Inbox },
 			aiHidden: SessionsGrouping.Environment,
+			reloaded: SessionsGrouping.Environment,
+		});
+	});
+
+	test('the Chat view leaves Inbox as Chat goes, such as as its participant deactivates, and does not come back in it, but keeps the Inbox it restores while Chat starts; the Agents window\'s Inbox stays', () => {
+		const configurationService = new TestConfigurationService({ [SESSIONS_LIST_INBOX_ENABLED_SETTING]: true });
+		disposables.add(configurationService.onDidChangeConfigurationEmitter);
+		const storageService = disposables.add(new InMemoryStorageService());
+		const chat = (chatEnabledAtStart = true) => createGroupingHost(configurationService, storageService, CHAT_VIEW_SESSIONS_GROUPINGS, false, CHAT_VIEW_SESSIONS_GROUPING_STORAGE_KEYS, true, chatEnabledAtStart);
+		const agentsWindow = createGroupingHost(configurationService, storageService);
+		agentsWindow.toggleInbox();
+		const chatView = chat();
+		chatView.setGrouping(SessionsGrouping.Environment);
+		chatView.toggleInbox();
+		const restoredWhileStarting = chat(false).grouping;
+		chatView.chatEnabled.set(false);
+		agentsWindow.chatEnabled.set(false);
+		const chatGone = { chat: chatView.grouping, agents: agentsWindow.grouping };
+		chatView.chatEnabled.set(true);
+		assert.deepStrictEqual({ restoredWhileStarting, chatGone, chatBack: chatView.grouping, reloaded: chat().grouping }, {
+			restoredWhileStarting: SessionsGrouping.Inbox,
+			chatGone: { chat: SessionsGrouping.Environment, agents: SessionsGrouping.Inbox },
+			chatBack: SessionsGrouping.Environment,
 			reloaded: SessionsGrouping.Environment,
 		});
 	});
