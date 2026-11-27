@@ -383,7 +383,7 @@ export class View extends ViewEventHandler {
 			marginDomNode,
 			linesContentDomNode: this._linesContent.domNode,
 			viewLinesDomNode: this._viewLines.getDomNode().domNode,
-			viewLinesGpu: this._viewLinesGpu,
+			viewLineHitTestProvider: this._viewLinesGpu,
 
 			focusTextArea: () => {
 				this.focus();
