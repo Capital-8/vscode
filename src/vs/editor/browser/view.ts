@@ -58,6 +58,8 @@ import { IInstantiationService } from '../../platform/instantiation/common/insta
 import { IColorTheme, getThemeTypeSelector } from '../../platform/theme/common/themeService.js';
 import { ViewGpuContext } from './gpu/viewGpuContext.js';
 import { ViewLinesGpu } from './viewParts/viewLinesGpu/viewLinesGpu.js';
+import { EditorViewGpu, EDITOR_VIEW_GPU_CAPABILITIES, type EditorViewGpuCapabilities } from './viewParts/editorViewGpu/editorViewGpu.js';
+import { DynamicViewOverlay } from './view/dynamicViewOverlay.js';
 import { AbstractEditContext } from './controller/editContext/editContext.js';
 import { IClipboardCopyEvent, IClipboardPasteEvent } from './controller/editContext/clipboardUtils.js';
 import { IVisibleRangeProvider, TextAreaEditContext } from './controller/editContext/textArea/textAreaEditContext.js';
@@ -97,12 +99,15 @@ export class View extends ViewEventHandler {
 	private readonly _viewLines: ViewLines;
 	private readonly _viewLinesGpu?: ViewLinesGpu;
 
+	// Experimental @vscode/editor-view (Rust/WASM) renderer
+	private readonly _editorViewGpu?: EditorViewGpu;
+
 	// These are parts, but we must do some API related calls on them, so we keep a reference
 	private readonly _viewZones: ViewZones;
 	private readonly _contentWidgets: ViewContentWidgets;
 	private readonly _overlayWidgets: ViewOverlayWidgets;
 	private readonly _glyphMarginWidgets: GlyphMarginWidgets;
-	private readonly _viewCursors: ViewCursors;
+	private readonly _viewCursors?: ViewCursors;
 	private readonly _viewParts: ViewPart[];
 	private readonly _viewController: ViewController;
 
@@ -189,9 +194,25 @@ export class View extends ViewEventHandler {
 		// Set role 'code' for better screen reader support https://github.com/microsoft/vscode/issues/93438
 		this.domNode.setAttribute('role', 'code');
 
-		if (this._context.configuration.options.get(EditorOption.experimentalGpuAcceleration) === 'on') {
+		const gpuAcceleration = this._context.configuration.options.get(EditorOption.experimentalGpuAcceleration);
+		if (gpuAcceleration === 'on') {
 			this._viewGpuContext = this._instantiationService.createInstance(ViewGpuContext, this._context);
+		} else if (gpuAcceleration === 'editorView') {
+			this._editorViewGpu = this._instantiationService.createInstance(EditorViewGpu, this._context, this.domNode.domNode);
+			this._register(this._editorViewGpu.onDidChangeReady(() => {
+				this.domNode.setClassName(this._getEditorClassName());
+				// Surface painters such as the minimap's start or stop painting.
+				this._scheduleRender();
+			}));
+			this._viewParts.push(this._editorViewGpu);
 		}
+		// In `editorView` mode the `@vscode/editor-view` (Rust/WASM) canvas draws
+		// the surfaces it owns, so we skip constructing/mounting/ticking the DOM
+		// view parts for those surfaces entirely (that parallel-DOM work is exactly
+		// the CPU cost this renderer exists to remove). `gpu` is null in every other
+		// mode, so the gates below are no-ops and the full DOM view is built as
+		// before. Today only text is owned, so this currently builds the same tree.
+		const gpu: EditorViewGpuCapabilities | null = gpuAcceleration === 'editorView' ? EDITOR_VIEW_GPU_CAPABILITIES : null;
 
 		this._scrollbar = new EditorScrollbar(this._context, this._linesContent, this.domNode, this._overflowGuardContainer);
 		this._viewParts.push(this._scrollbar);
@@ -207,30 +228,75 @@ export class View extends ViewEventHandler {
 		this._viewParts.push(this._viewZones);
 
 		// Decorations overview ruler
-		const decorationsOverviewRuler = new DecorationsOverviewRuler(this._context);
-		this._viewParts.push(decorationsOverviewRuler);
+		let decorationsOverviewRuler: DecorationsOverviewRuler | undefined;
+		if (!gpu?.overviewRuler) {
+			decorationsOverviewRuler = new DecorationsOverviewRuler(this._context, this._editorViewGpu?.overviewRulerPainter);
+			this._viewParts.push(decorationsOverviewRuler);
+		}
 
 
-		const scrollDecoration = new ScrollDecorationViewPart(this._context);
-		this._viewParts.push(scrollDecoration);
+		let scrollDecoration: ScrollDecorationViewPart | undefined;
+		if (!gpu?.scrollDecoration) {
+			scrollDecoration = new ScrollDecorationViewPart(this._context);
+			this._viewParts.push(scrollDecoration);
+		}
 
-		const contentViewOverlays = new ContentViewOverlays(this._context);
-		this._viewParts.push(contentViewOverlays);
-		contentViewOverlays.addDynamicOverlay(new CurrentLineHighlightOverlay(this._context));
-		contentViewOverlays.addDynamicOverlay(new SelectionsOverlay(this._context));
-		contentViewOverlays.addDynamicOverlay(new IndentGuidesOverlay(this._context));
-		contentViewOverlays.addDynamicOverlay(new DecorationsOverlay(this._context));
-		contentViewOverlays.addDynamicOverlay(new WhitespaceOverlay(this._context));
-		contentViewOverlays.addDynamicOverlay(new WordWrapIndicatorOverlay(this._context));
+		const contentOverlays: DynamicViewOverlay[] = [];
+		if (!gpu?.currentLine) { contentOverlays.push(new CurrentLineHighlightOverlay(this._context)); }
+		if (!gpu?.selection) { contentOverlays.push(new SelectionsOverlay(this._context)); }
+		if (!gpu?.guides) { contentOverlays.push(new IndentGuidesOverlay(this._context)); }
+		if (!gpu?.decorations) {
+			contentOverlays.push(new DecorationsOverlay(
+				this._context,
+				gpu?.supportedContentDecorations && this._editorViewGpu
+					? decoration => !this._editorViewGpu!.ownsContentDecoration(decoration)
+					: undefined,
+				gpu?.supportedContentDecorations && this._editorViewGpu
+					? requests => this._editorViewGpu!.layoutContentDecorationRanges(requests)
+					: undefined,
+			));
+		}
+		if (!gpu?.whitespace) {
+			contentOverlays.push(new WhitespaceOverlay(this._context));
+		}
+		contentOverlays.push(new WordWrapIndicatorOverlay(this._context));
+		let contentViewOverlays: ContentViewOverlays | undefined;
+		if (contentOverlays.length > 0) {
+			contentViewOverlays = new ContentViewOverlays(this._context);
+			for (const overlay of contentOverlays) {
+				contentViewOverlays.addDynamicOverlay(overlay);
+			}
+			if (gpu) {
+				// The renderer paints what these overlays draw in the DOM editor;
+				// what is left (unsupported decorations, wrap indicators) is rare.
+				contentViewOverlays.omitLinesWhileEmpty();
+			}
+			this._viewParts.push(contentViewOverlays);
+		}
 
-		const marginViewOverlays = new MarginViewOverlays(this._context);
-		this._viewParts.push(marginViewOverlays);
-		marginViewOverlays.addDynamicOverlay(new CurrentLineMarginHighlightOverlay(this._context));
-		marginViewOverlays.addDynamicOverlay(new MarginViewLineDecorationsOverlay(this._context));
-		marginViewOverlays.addDynamicOverlay(new LinesDecorationsOverlay(this._context));
-		marginViewOverlays.addDynamicOverlay(new LineNumbersOverlay(this._context));
+		const marginOverlays: DynamicViewOverlay[] = [];
+		if (!gpu?.currentLine) { marginOverlays.push(new CurrentLineMarginHighlightOverlay(this._context)); }
+		if (!gpu?.decorations) {
+			marginOverlays.push(new MarginViewLineDecorationsOverlay(this._context));
+			marginOverlays.push(new LinesDecorationsOverlay(this._context));
+		}
+		if (!gpu?.lineNumbers) {
+			marginOverlays.push(new LineNumbersOverlay(this._context));
+		} else if (this._editorViewGpu) {
+			// Decorated line numbers (coverage, agent feedback) can carry arbitrary
+			// CSS, so the DOM renders them above the canvas.
+			marginOverlays.push(new LineNumbersOverlay(this._context, true));
+		}
 		if (this._viewGpuContext) {
-			marginViewOverlays.addDynamicOverlay(new GpuMarkOverlay(this._context, this._viewGpuContext));
+			marginOverlays.push(new GpuMarkOverlay(this._context, this._viewGpuContext));
+		}
+		let marginViewOverlays: MarginViewOverlays | undefined;
+		if (marginOverlays.length > 0) {
+			marginViewOverlays = new MarginViewOverlays(this._context);
+			for (const overlay of marginOverlays) {
+				marginViewOverlays.addDynamicOverlay(overlay);
+			}
+			this._viewParts.push(marginViewOverlays);
 		}
 
 		// Glyph margin widgets
@@ -239,7 +305,9 @@ export class View extends ViewEventHandler {
 
 		const margin = new Margin(this._context);
 		margin.getDomNode().appendChild(this._viewZones.marginDomNode);
-		margin.getDomNode().appendChild(marginViewOverlays.getDomNode());
+		if (marginViewOverlays) {
+			margin.getDomNode().appendChild(marginViewOverlays.getDomNode());
+		}
 		margin.getDomNode().appendChild(this._glyphMarginWidgets.domNode);
 		this._viewParts.push(margin);
 
@@ -247,48 +315,81 @@ export class View extends ViewEventHandler {
 		this._contentWidgets = new ViewContentWidgets(this._context, this.domNode);
 		this._viewParts.push(this._contentWidgets);
 
-		this._viewCursors = new ViewCursors(this._context);
-		this._viewParts.push(this._viewCursors);
+		if (!gpu?.cursor) {
+			this._viewCursors = new ViewCursors(this._context);
+			this._viewParts.push(this._viewCursors);
+		}
 
 		// Overlay widgets
 		this._overlayWidgets = new ViewOverlayWidgets(this._context, this.domNode);
 		this._viewParts.push(this._overlayWidgets);
 
-		const rulers = this._viewGpuContext
-			? new RulersGpu(this._context, this._viewGpuContext)
-			: new Rulers(this._context);
-		this._viewParts.push(rulers);
+		let rulers: Rulers | RulersGpu | undefined;
+		if (this._viewGpuContext) {
+			rulers = new RulersGpu(this._context, this._viewGpuContext);
+			this._viewParts.push(rulers);
+		} else if (!gpu?.rulers) {
+			rulers = new Rulers(this._context);
+			this._viewParts.push(rulers);
+		}
 
-		const blockOutline = new BlockDecorations(this._context);
-		this._viewParts.push(blockOutline);
+		let blockOutline: BlockDecorations | undefined;
+		if (!gpu?.blockDecorations) {
+			blockOutline = new BlockDecorations(this._context);
+			this._viewParts.push(blockOutline);
+		}
 
-		const minimap = new Minimap(this._context);
-		this._viewParts.push(minimap);
+		let minimap: Minimap | undefined;
+		if (!gpu?.minimap) {
+			minimap = new Minimap(this._context, this._editorViewGpu?.minimapPainter);
+			this._viewParts.push(minimap);
+		}
 
 		// -------------- Wire dom nodes up
 
 		if (decorationsOverviewRuler) {
 			const overviewRulerData = this._scrollbar.getOverviewRulerLayoutInfo();
 			overviewRulerData.parent.insertBefore(decorationsOverviewRuler.getDomNode(), overviewRulerData.insertBefore);
+			const painterDomNode = decorationsOverviewRuler.getPainterDomNode();
+			if (painterDomNode) {
+				overviewRulerData.parent.insertBefore(painterDomNode, overviewRulerData.insertBefore);
+			}
 		}
 
-		this._linesContent.appendChild(contentViewOverlays.getDomNode());
-		if ('domNode' in rulers) {
+		if (contentViewOverlays) {
+			this._linesContent.appendChild(contentViewOverlays.getDomNode());
+		}
+		if (rulers && 'domNode' in rulers) {
 			this._linesContent.appendChild(rulers.domNode);
 		}
 		this._linesContent.appendChild(this._viewZones.domNode);
 		this._linesContent.appendChild(this._viewLines.getDomNode());
 		this._linesContent.appendChild(this._contentWidgets.domNode);
-		this._linesContent.appendChild(this._viewCursors.getDomNode());
+		if (this._viewCursors) {
+			this._linesContent.appendChild(this._viewCursors.getDomNode());
+		}
+		if (this._editorViewGpu) {
+			// The editorView canvas is the bottom layer, like the DOM text it
+			// replaces: gutter decorations, view zones, content widgets, rulers and
+			// fallback decorations stay above it (their backgrounds turn transparent
+			// once the renderer is ready, see editorViewGpu.css).
+			this._overflowGuardContainer.appendChild(this._editorViewGpu.canvas);
+		}
 		this._overflowGuardContainer.appendChild(margin.getDomNode());
 		this._overflowGuardContainer.appendChild(this._scrollbar.getDomNode());
 		if (this._viewGpuContext) {
 			this._overflowGuardContainer.appendChild(this._viewGpuContext.canvas);
 		}
-		this._overflowGuardContainer.appendChild(scrollDecoration.getDomNode());
+		if (scrollDecoration) {
+			this._overflowGuardContainer.appendChild(scrollDecoration.getDomNode());
+		}
 		this._overflowGuardContainer.appendChild(this._overlayWidgets.getDomNode());
-		this._overflowGuardContainer.appendChild(minimap.getDomNode());
-		this._overflowGuardContainer.appendChild(blockOutline.domNode);
+		if (minimap) {
+			this._overflowGuardContainer.appendChild(minimap.getDomNode());
+		}
+		if (blockOutline) {
+			this._overflowGuardContainer.appendChild(blockOutline.domNode);
+		}
 		this.domNode.appendChild(this._overflowGuardContainer);
 
 		if (overflowWidgetsDomNode) {
@@ -383,7 +484,7 @@ export class View extends ViewEventHandler {
 			marginDomNode,
 			linesContentDomNode: this._linesContent.domNode,
 			viewLinesDomNode: this._viewLines.getDomNode().domNode,
-			viewLineHitTestProvider: this._viewLinesGpu,
+			viewLineHitTestProvider: this._editorViewGpu ?? this._viewLinesGpu,
 
 			focusTextArea: () => {
 				this.focus();
@@ -394,7 +495,7 @@ export class View extends ViewEventHandler {
 			},
 
 			getLastRenderData: (): PointerHandlerLastRenderData => {
-				const lastViewCursorsRenderData = this._viewCursors.getLastRenderData() || [];
+				const lastViewCursorsRenderData = this._viewCursors?.getLastRenderData() || [];
 				const lastTextareaPosition = this._editContext.getLastRenderData();
 				return new PointerHandlerLastRenderData(lastViewCursorsRenderData, lastTextareaPosition);
 			},
@@ -415,7 +516,10 @@ export class View extends ViewEventHandler {
 			visibleRangeForPosition: (lineNumber: number, column: number) => {
 				this._flushAccumulatedAndRenderNow();
 				const position = new Position(lineNumber, column);
-				return this._viewLines.visibleRangeForPosition(position) ?? this._viewLinesGpu?.visibleRangeForPosition(position) ?? null;
+				return this._viewLines.visibleRangeForPosition(position)
+					?? this._viewLinesGpu?.visibleRangeForPosition(position)
+					?? this._editorViewGpu?.visibleRangeForPosition(position)
+					?? null;
 			},
 
 			getLineWidth: (lineNumber: number) => {
@@ -426,6 +530,10 @@ export class View extends ViewEventHandler {
 						return result;
 					}
 				}
+				const editorViewWidth = this._editorViewGpu?.getLineWidth(lineNumber);
+				if (editorViewWidth !== undefined) {
+					return editorViewWidth;
+				}
 				return this._viewLines.getLineWidth(lineNumber);
 			}
 		};
@@ -435,7 +543,9 @@ export class View extends ViewEventHandler {
 		return {
 			visibleRangeForPosition: (position: Position) => {
 				this._flushAccumulatedAndRenderNow();
-				return this._viewLines.visibleRangeForPosition(position);
+				return this._viewLines.visibleRangeForPosition(position)
+					?? this._editorViewGpu?.visibleRangeForPosition(position)
+					?? null;
 			},
 			linesVisibleRangesForRange: (range: Range, includeNewLines: boolean): LineVisibleRanges[] | null => {
 				this._flushAccumulatedAndRenderNow();
@@ -461,7 +571,8 @@ export class View extends ViewEventHandler {
 
 	private _getEditorClassName() {
 		const focused = this._editContext.isFocused() ? ' focused' : '';
-		return this._context.configuration.options.get(EditorOption.editorClassName) + ' ' + getThemeTypeSelector(this._context.theme.type) + focused;
+		const editorView = this._editorViewGpu?.editorClassName ? ' ' + this._editorViewGpu.editorClassName : '';
+		return this._context.configuration.options.get(EditorOption.editorClassName) + ' ' + getThemeTypeSelector(this._context.theme.type) + focused + editorView;
 	}
 
 	// --- begin event handlers
@@ -635,7 +746,15 @@ export class View extends ViewEventHandler {
 			renderText: (viewportData: ViewportData): [ViewPart[], RenderingContext] => {
 
 				if (this._viewLines.shouldRender()) {
-					this._viewLines.renderText(viewportData);
+					if (this._editorViewGpu) {
+						// `editorView` mode: keep ViewLines bookkeeping (scrolling /
+						// horizontal reveal / max-line-width) without DOM text paint.
+						// The GPU view part supplies real glyph-measured widths so
+						// the bookkeeping matches the painted text.
+						this._viewLines.renderTextInEditorView(viewportData, this._editorViewGpu);
+					} else {
+						this._viewLines.renderText(viewportData);
+					}
 					this._viewLines.onDidRender();
 				}
 
@@ -647,7 +766,7 @@ export class View extends ViewEventHandler {
 				// Rendering of viewLines might cause scroll events to occur, so collect view parts to render again
 				const viewPartsToRender = this._getViewPartsToRender();
 
-				return [viewPartsToRender, new RenderingContext(this._context.viewLayout, viewportData, this._viewLines, this._viewLinesGpu)];
+				return [viewPartsToRender, new RenderingContext(this._context.viewLayout, viewportData, this._viewLines, this._viewLinesGpu ?? this._editorViewGpu)];
 			},
 			prepareRender: (viewPartsToRender: ViewPart[], ctx: RenderingContext) => {
 				for (const viewPart of viewPartsToRender) {
@@ -688,7 +807,8 @@ export class View extends ViewEventHandler {
 		});
 		const viewPosition = this._context.viewModel.coordinatesConverter.convertModelPositionToViewPosition(modelPosition);
 		this._flushAccumulatedAndRenderNow();
-		const visibleRange = this._viewLines.visibleRangeForPosition(new Position(viewPosition.lineNumber, viewPosition.column));
+		const visibleRange = this._viewLines.visibleRangeForPosition(new Position(viewPosition.lineNumber, viewPosition.column))
+			?? this._editorViewGpu?.visibleRangeForPosition(viewPosition);
 		if (!visibleRange) {
 			return -1;
 		}
@@ -699,7 +819,7 @@ export class View extends ViewEventHandler {
 		const model = this._context.viewModel.model;
 		const viewLine = this._context.viewModel.coordinatesConverter.convertModelPositionToViewPosition(new Position(modelLineNumber, model.getLineMaxColumn(modelLineNumber))).lineNumber;
 		this._flushAccumulatedAndRenderNow();
-		const width = this._viewLines.getLineWidth(viewLine);
+		const width = this._editorViewGpu?.getLineWidth(viewLine) ?? this._viewLines.getLineWidth(viewLine);
 
 		return width;
 	}
